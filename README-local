@@ -1,0 +1,18 @@
+This weekend I worked on LDAP mungling: we needed to roll-out Koha with LDAP support, but at the same time, central LDAP server didn't have all data (date of birth, gender and address) needed for full entry about user in Koha. We had those data available as CSV export from other systems.
+
+There are many ways to tackle this problem from modifying Koha LDAP support (which I was somewhat reluctant to do) to importing data back into LDAP. However, none of those things can be done in just one day, so I decided to write small LDAP proxy which will do data marging for me.
+
+I started with Net::LDAP::Server based solution implemented by LDAP::Virtual module, but soon I stumbled upon problem of compareRequest which I couldn't implement correctly. Since it's required for login this was show-stopper.
+
+After a bit of searching, I found simple-proxy.pl which is part of Net::LDAP. This is simpler script which operates directly on sockets and ASN encoding of entries. It's very useful in debugging, so I decided to re-implement modification of searchResEntry from LDAP server as ldap-rewrite.pl with following changes:
+
+augment LDAP entry with data from YAML file (with configurable prefix for attribute names)
+support SSL to upstream LDAP server
+expand attributes with multiple values into separate attribute for each occurrence (to enable easy import of second value from attribute address using something like address_1 (it's 0 based, same as perl arrays)
+generate additional attributes using concatenation of prefix: from data and attribute name (to get hrEduPersonUniqueNumber_JMBG from attribute hrEduPersonUniqueNumber which has JMBG: 1234567890 as value)
+To keep it really KISS I used yaml files named as dn (for example, uid=dpavlin,dc=example,dc=com.yaml) for simple, human readable file fromat. This enabled me to separate data-mungling part into csv2yaml.pl. In this script, I converted values from CSV delimited by # into separate attributes, detect phone numbers which are mobile or fixed and do other tweaks (like gender mapping). YAML files are also nice if I want to implement audit trail of changes: I can just import them all into git and be done with it.
+
+For future versions, I can envision that overlay data can also be fetched from database, so I can add additional attributes to LDAP entries directly from Koha database. This will be useful when connecting with copiers which require LDAP with card number for each user which isn't available in upstream LDAP directory.
+
+Not bad for 4k of perl code :-) I hope this will help you use LDAP as directory for different data as opposed to just login service. Don't forget to push all useful data back to LDAP server, so that all application can take benefit from it without need to worry about source data format.
+

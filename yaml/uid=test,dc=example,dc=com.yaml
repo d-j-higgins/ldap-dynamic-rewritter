@@ -1,0 +1,11 @@
+---
+# extend with nis schema
+uidNumber: 1001
+gidNumber: 1001
+homeDirectory: '/home/test'
+loginShell: '/bin/bash'
+
+stuff:
+  - 'foo'
+  - 'bar'
+  - 'baz'

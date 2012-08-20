@@ -1,0 +1,44 @@
+Virtual LDAP is set of perl scripts which allows you to augment data in your
+existing LDAP server (which you don't want to modify) using ldap-rewrite.pl
+(supporting rewrite of bind request, search requests and responses).
+
+Alternative usage is to expose SQL database (currently Koha database with users)
+to some other system as LDAP server. This supports arbitrary number of objectClass
+objects (one per SQL file) and allows export of groups from RDBMS to LDAP groups.
+
+
+Install with:
+
+  cd /srv
+  svn co svn://svn.rot13.org/virtual-ldap/
+
+  cd virtual-ldap
+  ./bin/install-debian.sh
+
+
+If you need to augment or mungle LDAP from upstream server start:
+
+  ./bin/ldap-rewrite.pl
+
+You might want to edit configuration at top of script itself, especially
+overlay_prefix if you want your YAML data to be without it.
+
+To augment data with your own, you should create files
+
+  yaml/uid=login,dc=example,dc=com
+
+If you have test user in your LDAP edit configuration file and run tests:
+
+  cp t/config.pl.template t/config.pl
+  vi t/config.pl
+  ./t/ldap-rewrite.t
+
+
+If you want to expose MySQL Koha database as LDAP server start:
+
+  ./bin/ldap-koha.pl
+
+
+Home page for this program (please register your usage) is:
+
+  https://www.ohloh.net/p/virtual-ldap
