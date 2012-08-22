@@ -18,7 +18,7 @@ sub filter
 
     # do stuff here
 
-    return $asn;
+    return ;
 }
 
 

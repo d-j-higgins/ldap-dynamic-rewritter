@@ -136,6 +136,33 @@ sub log_request
     return $pdu;
 }
 
+our @outfilters;
+
+sub load_filters
+{
+    my ( $dir, $store ) = @_;
+
+    opendir( my $dh, "$dir" );
+    foreach my $file ( grep /^([^\.]+)\.pm$/, readdir $dh )
+    {
+        $file =~ m/^([^\.]+)\.pm$/;
+        my $filter = $1;
+        warn( "load filter: " . $filter );
+        eval { require "$dir/$file"; };
+
+        if ($@)
+        {
+            warn "Unable to load $file: $@";
+        }
+        else
+        {
+            push @$store, $filter;
+        }
+
+    }
+    closedir($dh);
+}
+
 sub log_response
 {
     my $pdu = shift;
@@ -155,33 +182,19 @@ sub log_response
 # searchResEntry has format { attributes => [ { type => ATTRNAME, vals => [actual values] } , ... ], objectName => 'DN' }
 
         # do dynamic filters
-        opendir( my $dh, "$config->{outfilter_dir}" );
-        foreach my $file ( grep /^([^\.]+)\.pm$/, readdir $dh )
+        foreach my $filter ( @outfilters)
         {
-            $file =~ m/^([^\.]+)\.pm$/;
-            my $filter = $1;
-            warn( "dir: " . $filter );
-            eval {
-                require "$config->{outfilter_dir}/$file";
-
-            };
-
-            if ($@)
-            {
-                warn "Unable to load $file: $@";
-                next;
-            }
+            warn( "running filter: " . $filter );
 
             eval {
                 my $filterobj = new $filter;
-                $filterobj->filter( $response->{protocolOp}->{searchResEntry} );
+                my $res       = $filterobj->filter( $response->{protocolOp}->{searchResEntry} );
             };
-              if ($@)
+            if ($@)
             {
-                warn "Unable to run filter $file: $@";
+                    warn "Unable to run filter $filter: $@";
             }
         }
-        closedir($dh);
 
         # do YAML attributes
         # YAML file may be a DN-named file or attributename/value ending in .yaml
@@ -233,6 +246,8 @@ my $listenersock = IO::Socket::INET->new(
 
 our $server_sock;    # list of all sockets
 our $sel = IO::Select->new($listenersock);
+
+load_filters($config->{outfilter_dir},\@outfilters);
 
 sub connect_to_server
 {
