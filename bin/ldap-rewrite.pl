@@ -28,12 +28,11 @@ my $debug = 0;
 
 my $config = {
 	yaml_dir => './yaml/',
-	listen => shift @ARGV || 'localhost:1389',
-	upstream_ldap => 'ldap.ffzg.hr',
+	listen => shift @ARGV || ':1389',
+	upstream_ldap => 'ldap.hp.com',
 	upstream_ssl => 1,
 	overlay_prefix => 'ffzg-',
-#	log_file => 'log/ldap-rewrite.log',
-
+	log_file => 'log/ldap-rewrite.log',
 };
 
 my $log_fh;
@@ -60,7 +59,28 @@ if ( ! -d $config->{yaml_dir} ) {
 
 warn "# config = ",dump( $config );
 
-sub handle {
+
+sub handleserverdata {
+ 	my $clientsocket=shift;
+	my $serversocket=shift;
+	# read from server
+	my $ready;
+	my $sel = IO::Select->new($serversocket);
+	for( $ready = 1 ; $ready ; $ready = $sel->can_read(0)) {
+		asn_read($serversocket, my $respdu);
+		if ( ! $respdu ) {
+			warn "server closed connection\n";
+			return 0;
+		}
+		$respdu = log_response($respdu);
+		# and send the result to the client
+		print $clientsocket $respdu || return 0;
+	}
+
+    return 1; # more expected
+}
+
+sub handleclientreq {
  	my $clientsocket=shift;
 	my $serversocket=shift;
 
@@ -75,19 +95,20 @@ sub handle {
 	# send to server
 	print $serversocket $reqpdu or die "Could not send PDU to server\n ";
 	
+    handleserverdata($clientsocket,$serversocket);
 	# read from server
-	my $ready;
-	my $sel = IO::Select->new($serversocket);
-	for( $ready = 1 ; $ready ; $ready = $sel->can_read(0)) {
-		asn_read($serversocket, my $respdu);
-		if ( ! $respdu ) {
-			warn "server closed connection\n";
-			return 0;
-		}
-		$respdu = log_response($respdu);
-		# and send the result to the client
-		print $clientsocket $respdu || return 0;
-	}
+#	my $ready;
+#	my $sel = IO::Select->new($serversocket);
+#	for( $ready = 1 ; $ready ; $ready = $sel->can_read(0)) {
+#		asn_read($serversocket, my $respdu);
+#		if ( ! $respdu ) {
+#			warn "server closed connection\n";
+#			return 0;
+#		}
+#		$respdu = log_response($respdu);
+#		# and send the result to the client
+#		print $clientsocket $respdu || return 0;
+#	}
 
 	return 1;
 }
@@ -201,7 +222,10 @@ my $listenersock = IO::Socket::INET->new(
 	LocalAddr => $config->{listen},
 ) || die "can't open listen socket: $!";
 
-our $server_sock;
+our $server_sock; # list of server sockets indexed by client
+our $client_sock; # list of client sockets indexed by server
+our $sel = IO::Select->new($listenersock);
+
 
 sub connect_to_server {
 	my $sock;
@@ -219,26 +243,64 @@ sub connect_to_server {
 	return $sock;
 }
 
-my $sel = IO::Select->new($listenersock);
+
+sub disconnect {
+                my $fh=shift;
+                # one of two connection has closed. terminate
+				warn "## remove $fh " . time;
+
+                my $srv;
+                my $client;
+                if ($server_sock->{$fh})
+                        {
+                        warn "## client socket";
+                        $srv=$server_sock->{$fh};
+                        $client=$fh;
+                }
+                else
+                {
+                        warn "## server socket";
+                        $srv=$fh;
+                        $client=$client_sock->{$fh};
+                }
+				$sel->remove($srv);
+				$sel->remove($client);
+                $srv->close;
+    			$client->close;
+        		delete $client_sock->{$srv};
+        		delete $server_sock->{$client};
+
+				# we have finished with the socket
+}
+
 while (my @ready = $sel->can_read) {
+         warn "## fh poll ". time;
 	foreach my $fh (@ready) {
-		if ($fh == $listenersock) {
+         warn "## fh ready $fh ". time;
+		if ($fh == $listenersock) { # listener is ready, meaning we have a new connection req waiting
 			# let's create a new socket
 			my $psock = $listenersock->accept;
+            $server_sock->{$psock}=1;
 			$sel->add($psock);
 			warn "## add $psock " . time;
-		} else {
-			$server_sock->{$fh} ||= connect_to_server;
-			if ( ! handle($fh,$server_sock->{$fh}) ) {
-				warn "## remove $fh " . time;
-				$sel->remove($server_sock->{$fh});
-				$server_sock->{$fh}->close;
-				delete $server_sock->{$fh};
-				# we have finished with the socket
-				$sel->remove($fh);
-				$fh->close;
+    } elsif ( $server_sock->{$fh} ) { # a client socket is ready, a request has come in on it
+			$server_sock->{$fh}= connect_to_server;
+            $client_sock->{$server_sock->{$fh}}=$fh;
+			if ( ! handleclientreq($fh,$server_sock->{$fh}) ) {
+                   disconnect($fh);
 			}
+            else {
+                    warn "## handled $fh ". time;
+                    # but more work to do:
+                    $sel->add($server_sock->{$fh});
+            }
 		}
+     else {
+         warn "unrequested server data".time;
+         if (! handleserverdata($client_sock->{$fh},$fh)) {
+                   disconnect($fh);
+         }
+     }
 	}
 }
 
