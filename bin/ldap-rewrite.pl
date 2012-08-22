@@ -68,21 +68,16 @@ sub handleserverdata
     my $serversocket = shift;
 
     # read from server
-    my $ready;
-    my $sel = IO::Select->new($serversocket);
-    for ( $ready = 1 ; $ready ; $ready = $sel->can_read(0) )
+    asn_read( $serversocket, my $respdu );
+    if ( !$respdu )
     {
-        asn_read( $serversocket, my $respdu );
-        if ( !$respdu )
-        {
-            warn "server closed connection\n";
-            return 0;
-        }
-        $respdu = log_response($respdu);
-
-        # and send the result to the client
-        print $clientsocket $respdu || return 0;
+        warn "server closed connection\n";
+        return 0;
     }
+    $respdu = log_response($respdu);
+
+    # and send the result to the client
+    print $clientsocket $respdu || return 0;
 
     return 1;    # more expected
 }
@@ -102,23 +97,7 @@ sub handleclientreq
     $reqpdu = log_request($reqpdu);
 
     # send to server
-    print $serversocket $reqpdu or die "Could not send PDU to server\n ";
-
-    handleserverdata( $clientsocket, $serversocket );
-
-    # read from server
-    #	my $ready;
-    #	my $sel = IO::Select->new($serversocket);
-    #	for( $ready = 1 ; $ready ; $ready = $sel->can_read(0)) {
-    #		asn_read($serversocket, my $respdu);
-    #		if ( ! $respdu ) {
-    #			warn "server closed connection\n";
-    #			return 0;
-    #		}
-    #		$respdu = log_response($respdu);
-    #		# and send the result to the client
-    #		print $clientsocket $respdu || return 0;
-    #	}
+    print $serversocket $reqpdu || return 0;
 
     return 1;
 }
@@ -249,8 +228,7 @@ my $listenersock = IO::Socket::INET->new(
     LocalAddr => $config->{listen},
 ) || die "can't open listen socket: $!";
 
-our $server_sock;    # list of server sockets indexed by client
-our $client_sock;    # list of client sockets indexed by server
+our $server_sock;    # list of all sockets
 our $sel = IO::Select->new($listenersock);
 
 sub connect_to_server
@@ -282,24 +260,14 @@ sub disconnect
 
     my $srv;
     my $client;
-    if ( $server_sock->{$fh} )
-    {
-        warn "## client socket";
-        $srv    = $server_sock->{$fh};
-        $client = $fh;
-    }
-    else
-    {
-        warn "## server socket";
-        $srv    = $fh;
-        $client = $client_sock->{$fh};
-    }
+    $srv    = $server_sock->{$fh}->{server};
+    $client = $server_sock->{$fh}->{client};
     $sel->remove($srv);
     $sel->remove($client);
     $srv->close;
     $client->close;
-    delete $client_sock->{$srv};
     delete $server_sock->{$client};
+    delete $server_sock->{$srv};
 
     # we have finished with the socket
 }
@@ -314,15 +282,17 @@ while ( my @ready = $sel->can_read )
         {    # listener is ready, meaning we have a new connection req waiting
                 # let's create a new socket
             my $psock = $listenersock->accept;
-            $server_sock->{$psock} = 1;
+            $server_sock->{$psock} = { client => $psock };
             $sel->add($psock);
             warn "## add $psock " . time;
         }
-        elsif ( $server_sock->{$fh} )
+        elsif ( $fh == $server_sock->{$fh}->{client} )
         {       # a client socket is ready, a request has come in on it
-            $server_sock->{$fh} = connect_to_server;
-            $client_sock->{ $server_sock->{$fh} } = $fh;
-            if ( !handleclientreq( $fh, $server_sock->{$fh} ) )
+            warn "## fh new client $fh " . time;
+            my $t = { server => connect_to_server, client => $fh };
+            $server_sock->{ $t->{client} } = $t;
+            $server_sock->{ $t->{server} } = $t;
+            if ( !handleclientreq( $server_sock->{$fh}->{client}, $server_sock->{$fh}->{server} ) )
             {
                 disconnect($fh);
             }
@@ -331,13 +301,13 @@ while ( my @ready = $sel->can_read )
                 warn "## handled $fh " . time;
 
                 # but more work to do:
-                $sel->add( $server_sock->{$fh} );
+                $sel->add( $server_sock->{$fh}->{server} );
             }
         }
         else
         {
-            warn "unrequested server data" . time;
-            if ( !handleserverdata( $client_sock->{$fh}, $fh ) )
+            warn "unrequested server data " . time;
+            if ( !handleserverdata( $server_sock->{$fh}->{client}, $server_sock->{$fh}->{server} ) )
             {
                 disconnect($fh);
             }
