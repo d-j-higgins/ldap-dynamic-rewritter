@@ -10,6 +10,8 @@ sub new()
     return $self;
 }
 
+
+# searchResEntry has format { attributes => [ { type => ATTRNAME, vals => [actual values] } , ... ], objectName => 'DN' }
 sub filter
 {
     my ( $self, $asn ) = @_;
@@ -18,3 +20,6 @@ sub filter
 
     return $asn;
 }
+
+
+1;

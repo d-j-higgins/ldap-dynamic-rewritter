@@ -23,6 +23,9 @@ use Net::LDAP::ASN qw(LDAPRequest LDAPResponse);
 our $VERSION = '0.3';
 use fields qw(socket target);
 use YAML qw/LoadFile/;
+use Carp;
+
+$SIG{__DIE__} = sub { Carp::confess @_ };
 
 my $debug = 0;
 
@@ -151,6 +154,38 @@ sub log_response
 
 # searchResEntry has format { attributes => [ { type => ATTRNAME, vals => [actual values] } , ... ], objectName => 'DN' }
 
+        # do dynamic filters
+        opendir( my $dh, "$config->{outfilter_dir}" );
+        foreach my $file ( grep /^([^\.]+)\.pm$/, readdir $dh )
+        {
+            $file =~ m/^([^\.]+)\.pm$/;
+            my $filter = $1;
+            warn( "dir: " . $filter );
+            eval {
+                require "$config->{outfilter_dir}/$file";
+
+            };
+
+            if ($@)
+            {
+                warn "Unable to load $file: $@";
+                next;
+            }
+
+            eval {
+                my $filterobj = new $filter;
+                $filterobj->filter( $response->{protocolOp}->{searchResEntry} );
+            };
+              if ($@)
+            {
+                warn "Unable to run filter $file: $@";
+            }
+        }
+        closedir($dh);
+
+        # do YAML attributes
+        # YAML file may be a DN-named file or attributename/value ending in .yaml
+        # ie gidNumber/3213.yaml
         my @additional_yamls = ($uid);
         foreach my $attr ( @{ $response->{protocolOp}->{searchResEntry}->{attributes} } )
         {
@@ -161,7 +196,6 @@ sub log_response
         }
 
         #warn "# additional_yamls ",dump( @additional_yamls );
-
         foreach my $path (@additional_yamls)
         {
             my $full_path = $config->{yaml_dir} . '/' . $path . '.yaml';
@@ -172,7 +206,6 @@ sub log_response
 
             foreach my $type ( keys %$data )
             {
-
                 my $vals = $data->{$type};
 
                 push @{ $response->{protocolOp}->{searchResEntry}->{attributes} },
@@ -186,7 +219,7 @@ sub log_response
         $pdu = $LDAPResponse->encode($response);
     }
 
-    warn "## response = ", dump($response);
+    #    warn "## response = ", dump($response);
 
     return $pdu;
 }

@@ -1,5 +1,10 @@
 rewrite-ldap will look for output filters in outfilters/
 
 all files starting with .PM gets called as a new module, minus the .PM extension.
-it then looks for a ->filter sub on this object and calls it with the decoded ASN object reference
-expects a valid decoded ASN object reference in return
+it then looks for a ->filter sub on this object and calls it with the searchResEntry reference:
+ searchResEntry has format { attributes => [ { type => ATTRNAME, vals => [actual values] } , ... ], objectName => 'DN' }
+
+it should return nothing, and reports error with die();
+
+NOTE: if you die() anywhere in this code, any change already done to the entry WILL be passed on to the client. a die() in a filter module is NOT fatal to the server as a whole
+as such, if you die(), you should do a deep copy using Storable and restore the ressource before dying
