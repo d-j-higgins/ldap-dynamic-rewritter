@@ -28,6 +28,7 @@ my $debug = 0;
 
 my $config = {
     yaml_dir       => './yaml/',
+    outfilter_dir  => './outfilter/',
     listen         => shift @ARGV || ':1389',
     upstream_ldap  => 'ldap.hp.com',
     upstream_ssl   => 1,
@@ -148,38 +149,7 @@ sub log_response
         my $uid = $response->{protocolOp}->{searchResEntry}->{objectName};
         warn "## objectName $uid";
 
-        my @attrs;
-
-        foreach my $attr ( @{ $response->{protocolOp}->{searchResEntry}->{attributes} } )
-        {
-            if ( $attr->{type} =~ m/date/i )
-            {
-                foreach my $i ( 0 .. $#{ $attr->{vals} } )
-                {
-                    $attr->{vals}->[$i] = "$1-$2-$3" if $attr->{vals}->[$i] =~ m/^([12]\d\d\d)([01]\d+)([0123]\d+)$/;
-                }
-            }
-            elsif ( $attr->{type} eq 'hrEduPersonUniqueNumber' )
-            {
-                foreach my $val ( @{ $attr->{vals} } )
-                {
-                    next if $val !~ m{.+:.+};
-                    my ( $n, $v ) = split( /\s*:\s*/, $val );
-                    push @attrs, { type => $attr->{type} . '_' . $n, vals => [$v] };
-                }
-            }
-            elsif ( $attr->{type} eq 'hrEduPersonGroupMember' )
-            {
-                foreach my $i ( 0 .. $#{ $attr->{vals} } )
-                {
-                    $attr->{vals}->[$i] =~ s/^u2010/p2010/gs && warn "FIXME group";
-                }
-            }
-        }
-
-        warn "# ++ attrs ", dump(@attrs);
-
-        push @{ $response->{protocolOp}->{searchResEntry}->{attributes} }, $_ foreach @attrs;
+# searchResEntry has format { attributes => [ { type => ATTRNAME, vals => [actual values] } , ... ], objectName => 'DN' }
 
         my @additional_yamls = ($uid);
         foreach my $attr ( @{ $response->{protocolOp}->{searchResEntry}->{attributes} } )
