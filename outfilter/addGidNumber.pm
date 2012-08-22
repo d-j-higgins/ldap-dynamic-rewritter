@@ -1,4 +1,4 @@
-package addattribute;
+package addGidNumber;
 
 sub new()
 {
