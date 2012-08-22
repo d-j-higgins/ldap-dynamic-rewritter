@@ -1,0 +1,5 @@
+rewrite-ldap will look for output filters in outfilters/
+
+all files starting with .PM gets called as a new module, minus the .PM extension.
+it then looks for a ->filter sub on this object and calls it with the decoded ASN object reference
+expects a valid decoded ASN object reference in return
