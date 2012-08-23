@@ -264,7 +264,13 @@ sub connect_to_server
             PeerPort => 389,
         );
     }
-    die "can't open ", $config->{upstream_ldap}, " $!\n" unless $sock;
+
+    if ( !$sock )
+    {
+        warn "can't open ", $config->{upstream_ldap}, " $!\n";
+        return undef;
+    }
+
     warn "## connected to ", $sock->peerhost, ":", $sock->peerport, "\n";
     return $sock;
 }
@@ -274,6 +280,7 @@ sub disconnect
     my $fh = shift;
 
     # one of two connection has closed. terminate
+    no warnings;
     warn "## remove $fh " . time;
 
     my $srv;
@@ -282,32 +289,41 @@ sub disconnect
     $client = $server_sock->{$fh}->{client};
     $sel->remove($srv);
     $sel->remove($client);
-    $srv->close;
-    $client->close;
+    $srv->close if $srv;
+    $client->close if $client;
     delete $server_sock->{$client};
     delete $server_sock->{$srv};
+    use warnings;
 
     # we have finished with the socket
 }
 
+
 while ( my @ready = $sel->can_read )
 {
-    warn "## fh poll " . time;
+    warn "## fh poll " . time if $debug;
     foreach my $fh (@ready)
     {
-        warn "## fh ready $fh " . time;
+        warn "## fh ready $fh " . time if $debug;
         if ( $fh == $listenersock )
         {    # listener is ready, meaning we have a new connection req waiting
                 # let's create a new socket
             my $psock = $listenersock->accept;
             $server_sock->{$psock} = { client => $psock };
             $sel->add($psock);
-            warn "## add $psock " . time;
+            warn "## add $psock " . time if $debug;
         }
         elsif ( $fh == $server_sock->{$fh}->{client} )
         {       # a client socket is ready, a request has come in on it
-            warn "## fh new client $fh " . time;
+            warn "## fh new client $fh " . time ;
             my $t = { server => connect_to_server, client => $fh };
+
+            if (!$t->{server})
+                    {
+                    disconnect($t->{client});
+                    next;
+                    }
+
             $server_sock->{ $t->{client} } = $t;
             $server_sock->{ $t->{server} } = $t;
             if ( !handleclientreq( $server_sock->{$fh}->{client}, $server_sock->{$fh}->{server} ) )
@@ -316,7 +332,7 @@ while ( my @ready = $sel->can_read )
             }
             else
             {
-                warn "## handled $fh " . time;
+                warn "## handled $fh " . time if $debug;
 
                 # but more work to do:
                 $sel->add( $server_sock->{$fh}->{server} );
@@ -324,7 +340,7 @@ while ( my @ready = $sel->can_read )
         }
         else
         {
-            warn "unrequested server data " . time;
+            warn "unrequested server data " . time if $debug;
             if ( !handleserverdata( $server_sock->{$fh}->{client}, $server_sock->{$fh}->{server} ) )
             {
                 disconnect($fh);
