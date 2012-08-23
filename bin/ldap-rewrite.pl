@@ -117,20 +117,25 @@ sub log_request
     #	Convert::ASN1::asn_hexdump(\*STDOUT,$pdu);
     #	print "Request Perl:\n";
     my $request = $LDAPRequest->decode($pdu);
-    warn "## request = ", dump($request);
+
+    # WARN: this has security implication, we do NOT want to log this packet ever
+    #warn "## request = ", dump($request);
+    warn "## Received request" if $debug;;
 
     if ( defined $request->{bindRequest} )
     {
+        ### TODO: this is an exemple of inputfilter. this should be moved to a separate module 
         if ( $request->{bindRequest}->{name} =~ m{@} )
         {
             my $old = $request->{bindRequest}->{name};
-            $request->{bindRequest}->{name} =~ s/[@\.]/,dc=/g;
-            $request->{bindRequest}->{name} =~ s/^/uid=/;
+            #            $request->{bindRequest}->{name} =~ s/[@\.]/,dc=/g; # this removes @domain.com and replaces it with dc=domain.com   
+            $request->{bindRequest}->{name} =~ s/^(uid=)?/uid=/;
             warn "rewrite bind cn $old -> ", $request->{bindRequest}->{name};
             Convert::ASN1::asn_hexdump( \*STDOUT, $pdu ) if $debug;
             $pdu = $LDAPRequest->encode($request);
             Convert::ASN1::asn_hexdump( \*STDOUT, $pdu ) if $debug;
         }
+        ### END input filter
     }
 
     return $pdu;
