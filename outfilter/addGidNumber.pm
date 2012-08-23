@@ -50,11 +50,13 @@ sub encodeGidNumber
     my $lowgid = shift;
     my $rawgid;
     my $gid;
-    vec( $rawgid, 31, 1 ) = 0;
+    vec( $rawgid, 31, 1 ) = 1;
     vec( $rawgid, 0,  8 ) = $lowgid & 0xFF;
     vec( $rawgid, 1,  8 ) = $lowgid >> 8;
     vec( $rawgid, 2,  8 ) = $lowgid >> 16;
     $gid = unpack( "L", $rawgid );
+#    warn "encoded $gid";
+    return $gid;
 }
 
 # find the last "local" gid number assigned in our database
