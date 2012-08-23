@@ -1,0 +1,4 @@
+this code is GPL-V3
+
+basic ldap-rewrite.pl and associated libraries copyright rot13.org
+bug fixes and dynamic attribute filtering (outfilters) copyright 2012 Hewlett-Packard Development Company, L.P - written by Daniel Higgins (dhiggins@hp.com)
