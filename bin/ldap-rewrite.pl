@@ -120,15 +120,16 @@ sub log_request
 
     # WARN: this has security implication, we do NOT want to log this packet ever
     #warn "## request = ", dump($request);
-    warn "## Received request" if $debug;;
+    warn "## Received request" if $debug;
 
     if ( defined $request->{bindRequest} )
     {
-        ### TODO: this is an exemple of inputfilter. this should be moved to a separate module 
+        ### TODO: this is an exemple of inputfilter. this should be moved to a separate module
         if ( $request->{bindRequest}->{name} =~ m{@} )
         {
             my $old = $request->{bindRequest}->{name};
-            #            $request->{bindRequest}->{name} =~ s/[@\.]/,dc=/g; # this removes @domain.com and replaces it with dc=domain.com   
+
+            #            $request->{bindRequest}->{name} =~ s/[@\.]/,dc=/g; # this removes @domain.com and replaces it with dc=domain.com
             $request->{bindRequest}->{name} =~ s/^(uid=)?/uid=/;
             warn "rewrite bind cn $old -> ", $request->{bindRequest}->{name};
             Convert::ASN1::asn_hexdump( \*STDOUT, $pdu ) if $debug;
@@ -184,10 +185,10 @@ sub log_response
         my $uid = $response->{protocolOp}->{searchResEntry}->{objectName};
         warn "## objectName $uid";
 
-# searchResEntry has format { attributes => [ { type => ATTRNAME, vals => [actual values] } , ... ], objectName => 'DN' }
+        # searchResEntry has format { attributes => [ { type => ATTRNAME, vals => [actual values] } , ... ], objectName => 'DN' }
 
         # do dynamic filters
-        foreach my $filter ( @outfilters)
+        foreach my $filter (@outfilters)
         {
             warn( "running filter: " . $filter );
 
@@ -197,7 +198,7 @@ sub log_response
             };
             if ($@)
             {
-                    warn "Unable to run filter $filter: $@";
+                warn "Unable to run filter $filter: $@";
             }
         }
 
@@ -252,7 +253,7 @@ my $listenersock = IO::Socket::INET->new(
 our $server_sock;    # list of all sockets
 our $sel = IO::Select->new($listenersock);
 
-load_filters($config->{outfilter_dir},\@outfilters);
+load_filters( $config->{outfilter_dir}, \@outfilters );
 
 sub connect_to_server
 {
@@ -294,7 +295,7 @@ sub disconnect
     $client = $server_sock->{$fh}->{client};
     $sel->remove($srv);
     $sel->remove($client);
-    $srv->close if $srv;
+    $srv->close    if $srv;
     $client->close if $client;
     delete $server_sock->{$client};
     delete $server_sock->{$srv};
@@ -303,7 +304,6 @@ sub disconnect
     # we have finished with the socket
 }
 
-
 while ( my @ready = $sel->can_read )
 {
     warn "## fh poll " . time if $debug;
@@ -311,23 +311,26 @@ while ( my @ready = $sel->can_read )
     {
         warn "## fh ready $fh " . time if $debug;
         if ( $fh == $listenersock )
-        {    # listener is ready, meaning we have a new connection req waiting
-                # let's create a new socket
+        {
+
+            # listener is ready, meaning we have a new connection req waiting
             my $psock = $listenersock->accept;
             $server_sock->{$psock} = { client => $psock };
             $sel->add($psock);
             warn "## add $psock " . time if $debug;
         }
         elsif ( $fh == $server_sock->{$fh}->{client} )
-        {       # a client socket is ready, a request has come in on it
-            warn "## fh new client $fh " . time ;
-            my $t = { server => connect_to_server, client => $fh };
+        {
 
-            if (!$t->{server})
-                    {
-                    disconnect($t->{client});
-                    next;
-                    }
+            # a client socket is ready, a request has come in on it
+            warn "## fh new client $fh " . time;
+
+            my $t = { server => connect_to_server, client => $fh };
+            if ( !$t->{server} )
+            {
+                disconnect( $t->{client} );
+                next;
+            }
 
             $server_sock->{ $t->{client} } = $t;
             $server_sock->{ $t->{server} } = $t;
@@ -335,13 +338,10 @@ while ( my @ready = $sel->can_read )
             {
                 disconnect($fh);
             }
-            else
-            {
-                warn "## handled $fh " . time if $debug;
+            warn "## handled $fh " . time if $debug;
 
-                # but more work to do:
-                $sel->add( $server_sock->{$fh}->{server} );
-            }
+            # server socket did not disconnect, meaning the server has more data to send to us. add the socket to the selector
+            $sel->add( $server_sock->{$fh}->{server} );
         }
         else
         {
