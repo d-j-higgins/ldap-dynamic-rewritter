@@ -1,0 +1,38 @@
+package dnrewrite;
+
+sub new()
+{
+    my ($class) = @_;
+
+    my $self = {};
+    bless $self, $class;
+
+    return $self;
+}
+
+# searchResEntry has format { attributes => [ { type => ATTRNAME, vals => [actual values] } , ... ], objectName => 'DN' }
+# req has format { messageID => SEQUENCE, bindRequest => {authentication =>{ simple => PASSWORD, name => "DN", version => 3}}}
+# req has format { messageID => SEQUENCE, searchRequest => {attribute=>[],baseObject=>'baseDN',derefAliases=>0,filter => {present => "objectClass" }, scope=>2,sizeLimit=>0,timeLimit=>5,typesOnly=>0}}
+# filter should modify $req directly
+sub filter
+{
+    my ( $self, $req ) = @_;
+
+    if ( defined $req->{bindRequest} )
+    {
+        if ( $req->{bindRequest}->{name} =~ m{@} )
+        {
+            my $old = $req->{bindRequest}->{name};
+
+            $req->{bindRequest}->{name} =~ s/[@\.]/,dc=/g;     # this removes @domain.com and replaces it with dc=domain.com
+            $req->{bindRequest}->{name} =~ s/^(uid=)?/uid=/;   # inserts uid= at the front if not already present
+            warn "rewrite bind cn $old -> ", $req->{bindRequest}->{name};
+            Convert::ASN1::asn_hexdump( \*STDOUT, $pdu ) if $debug;
+            Convert::ASN1::asn_hexdump( \*STDOUT, $pdu ) if $debug;
+        }
+    }
+
+    return;
+}
+
+1;

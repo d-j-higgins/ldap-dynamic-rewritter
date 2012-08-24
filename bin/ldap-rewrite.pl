@@ -24,6 +24,8 @@ our $VERSION = '0.3';
 use fields qw(socket target);
 use YAML qw/LoadFile/;
 use Carp;
+our $sel; # IO::Select;
+our $server_sock;    # list of all sockets
 
 $SIG{__DIE__} = sub { Carp::confess @_ };
 
@@ -32,6 +34,7 @@ my $debug = 0;
 my $config = {
     yaml_dir       => './yaml/',
     outfilter_dir  => './outfilter/',
+    infilter_dir   => './infilter/',
     listen         => shift @ARGV || ':1389',
     upstream_ldap  => 'ldap.hp.com',
     upstream_ssl   => 1,
@@ -64,7 +67,6 @@ if ( !-d $config->{yaml_dir} )
     warn "DISABLE ", $config->{yaml_dir}, " data overlay";
 }
 
-warn "# config = ", dump($config);
 
 sub handleserverdata
 {
@@ -117,32 +119,32 @@ sub log_request
     #	Convert::ASN1::asn_hexdump(\*STDOUT,$pdu);
     #	print "Request Perl:\n";
     my $request = $LDAPRequest->decode($pdu);
+    my $filtered;
 
-    # WARN: this has security implication, we do NOT want to log this packet ever
-    #warn "## request = ", dump($request);
+    # WARN: this has security implication, we do NOT want to log this packet ever, but it is useful for writing infilters
+    #    warn "## request = ", dump($request);
     warn "## Received request" if $debug;
 
-    if ( defined $request->{bindRequest} )
+    # do dynamic filters
+    foreach my $filter (@{$config->{infilters}})
     {
-        ### TODO: this is an exemple of inputfilter. this should be moved to a separate module
-        if ( $request->{bindRequest}->{name} =~ m{@} )
-        {
-            my $old = $request->{bindRequest}->{name};
+        warn( "running filter: " . $filter );
 
-            #            $request->{bindRequest}->{name} =~ s/[@\.]/,dc=/g; # this removes @domain.com and replaces it with dc=domain.com
-            $request->{bindRequest}->{name} =~ s/^(uid=)?/uid=/;
-            warn "rewrite bind cn $old -> ", $request->{bindRequest}->{name};
-            Convert::ASN1::asn_hexdump( \*STDOUT, $pdu ) if $debug;
-            $pdu = $LDAPRequest->encode($request);
-            Convert::ASN1::asn_hexdump( \*STDOUT, $pdu ) if $debug;
+        eval {
+            my $filterobj = new $filter;
+            $filterobj->filter($request);
+            $filtered=1;
+        };
+        if ($@)
+        {
+            warn "Unable to run filter $filter: $@";
         }
-        ### END input filter
     }
 
+    $pdu = $LDAPRequest->encode($request) if $filtered;
     return $pdu;
 }
 
-our @outfilters;
 
 sub load_filters
 {
@@ -188,7 +190,7 @@ sub log_response
         # searchResEntry has format { attributes => [ { type => ATTRNAME, vals => [actual values] } , ... ], objectName => 'DN' }
 
         # do dynamic filters
-        foreach my $filter (@outfilters)
+        foreach my $filter (@{$config->{outfilters}})
         {
             warn( "running filter: " . $filter );
 
@@ -243,17 +245,7 @@ sub log_response
     return $pdu;
 }
 
-my $listenersock = IO::Socket::INET->new(
-    Listen    => 5,
-    Proto     => 'tcp',
-    Reuse     => 1,
-    LocalAddr => $config->{listen},
-) || die "can't open listen socket: $!";
 
-our $server_sock;    # list of all sockets
-our $sel = IO::Select->new($listenersock);
-
-load_filters( $config->{outfilter_dir}, \@outfilters );
 
 sub connect_to_server
 {
@@ -303,6 +295,20 @@ sub disconnect
 
     # we have finished with the socket
 }
+
+my $listenersock = IO::Socket::INET->new(
+    Listen    => 5,
+    Proto     => 'tcp',
+    Reuse     => 1,
+    LocalAddr => $config->{listen},
+) || die "can't open listen socket: $!";
+
+$sel = IO::Select->new($listenersock);
+$config->{outfilters}=[];
+$config->{infilters}=[];
+load_filters( $config->{outfilter_dir},$config->{outfilters} );
+load_filters( $config->{infilter_dir}, $config->{infilters} );
+warn "# config = ", dump($config);
 
 while ( my @ready = $sel->can_read )
 {
