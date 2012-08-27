@@ -1,5 +1,7 @@
 #!/usr/bin/perl
 # Copyright (c) 2006 Hans Klunder <hans.klunder@bigfoot.com>. All rights reserved.
+# Copyright (c) 2009 Dobrica Pavlinusic <dpavlin@rot13.org> All rights reserved.
+# Copyright (c) 2012 Hewlett-Packard Development Company, L.P
 # This program is free software; you can redistribute it and/or
 # modify it under the same terms as Perl itself.
 
@@ -9,6 +11,13 @@
 # * rewrite search responses:
 # ** expand key:value pairs from hrEduPersonUniqueNumber into hrEduPersonUniqueNumber_key
 # ** augment response with yaml/dn.yaml data (for external data import)
+# 
+# Modified by Daniel Higgins <dhiggins@hp.com> 
+# * fix some socket-reading bugs for large server replies 
+# * simplify workflow
+# * implement dynamic filters support 
+# * move original bind request and search response filtering to dynamic filters
+# * implement addGidNumber dynamic filter
 
 use strict;
 use warnings;
