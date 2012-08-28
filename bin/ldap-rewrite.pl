@@ -40,6 +40,7 @@ $SIG{__DIE__} = sub { Carp::confess @_ };
 
 my $debug = 0;
 
+
 my $config = {
     yaml_dir       => './yaml/',
     outfilter_dir  => './outfilter/',
@@ -51,8 +52,13 @@ my $config = {
     log_file       => 'log/ldap-rewrite.log',
 };
 
-my $log_fh;
+my $SCRIPTDIR= `dirname \`readlink -m "$0"\``;                                                                                         
+$SCRIPTDIR= `readlink -m "$SCRIPTDIR/.."`;                                                                                         
+chomp($SCRIPTDIR);
+print "Moving to $SCRIPTDIR\n";
+chdir("$SCRIPTDIR") || die ("cannot chdir: $!"); 
 
+my $log_fh;
 sub log
 {
     return unless $config->{log_file};
