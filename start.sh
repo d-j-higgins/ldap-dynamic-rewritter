@@ -1,11 +1,17 @@
 #!/bin/bash
 
-(
-SCRIPTDIR=`readlink -f \`dirname $0\``
-cd $SCRIPTDIR
+FILE="/tmp/ldap-rewriter.pid";
 
-log=/var/log/ldap-rewrite.log
-while true; do ./bin/ldap-rewrite.pl  | tee -a $log; done
-)&
+        (
+         SCRIPTDIR=`readlink -f \`dirname $0\``
+         cd $SCRIPTDIR
 
-echo $! > /tmp/ldap-rewriter.pid
+         log=/var/log/ldap-rewrite.log
+         while true; do ./bin/ldap-rewrite.pl  | tee -a $log; done
+        )&
+
+# store pid and programgroup pid (as negative)
+spid=$!
+pgid=$(ps -p $spid  -o pgid="" | awk '{print $1}')
+echo $spid -$pgid > $FILE
+cat $FILE
