@@ -45,7 +45,9 @@ sub get
     {
         return ( $key, $data );
     }
-    return undef;
+    return undef if ! wantarray;
+    return ($key,undef) if wantarray;
+
 }
 
 sub set

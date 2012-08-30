@@ -34,4 +34,8 @@ my ( $key, $d ) = $c->get($sha);
 $d = $c->genkey($d);
 is( $d, "eUEVRx6FSEYtL2PvAA+zlJd0zr4" );
 
+is($c->get("doesntexist"),undef);
+( $key, $d ) = $c->get("doesntexist");
+is($d,undef);
+is($key,"doesntexist");
 #warn "- $key $d ";
