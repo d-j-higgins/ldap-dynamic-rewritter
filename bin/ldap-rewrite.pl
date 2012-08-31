@@ -47,7 +47,7 @@ my %debug = (
     info   => 0,     #Generic info
     warn   => 0,     #Generic warning
     err    => 0,     #Generic error
-    pkt    => 0,     #packets
+    pkt    => 1,     #packets
     net    => 0,     #connections
     cache  => 1,     #caching info
     cache2 => 0,     #caching debug
@@ -110,7 +110,8 @@ sub handleserverdata
         warn "server closed connection\n" if $debug{net};
         return 0;
     }
-    $respdu = log_response($respdu);
+    my $response = $LDAPResponse->decode($respdu);
+    $respdu = log_response($clientsocket,$serversocket,$response);
 
     # and send the result to the client
     print $clientsocket $respdu || return 0;
@@ -131,7 +132,7 @@ sub handleclientreq
         return 0;
     }
     my $decodedpdu = $LDAPRequest->decode($reqpdu);
-    $decodedpdu = log_request($decodedpdu);
+    $decodedpdu = log_request($clientsocket,$serversocket,$decodedpdu);
 
     # check the cache for this request. forward to server if it's not found, or to client if it is
     my ( $key, $cdata ) = $cache->get( $decodedpdu->{searchRequest} );
@@ -164,6 +165,8 @@ sub handleclientreq
 
 sub log_request
 {
+    my $clientsocket = shift;
+    my $serversocket = shift;
     my $request = shift;
 
     die "empty pdu" unless $request;
@@ -172,10 +175,7 @@ sub log_request
     #	print "Request ASN 1:\n";
     #	Convert::ASN1::asn_hexdump(\*STDOUT,$pdu);
     #	print "Request Perl:\n";
-    my $filtered;
 
-    # WARN: this has security implication, we do NOT want to log this packet ever, but it is useful for writing infilters
-    #    warn "## request = ", dump($request);
     warn "## Received request" if $debug{net};
     warn "Request: " . dump($request) if $debug{pkt};
 
@@ -187,7 +187,6 @@ sub log_request
         eval {
             my $filterobj = new $filter;
             $filterobj->filter($request);
-            $filtered = 1;
         };
         if ($@)
         {
@@ -225,14 +224,15 @@ sub load_filters
 
 sub log_response
 {
-    my $pdu = shift;
-    die "empty pdu" unless $pdu;
+    my $clientsocket = shift;
+    my $serversocket = shift;
+    my $response = shift;
+    die "empty pdu" unless $response;
 
     #	print '-' x 80,"\n";
     #	print "Response ASN 1:\n";
     #	Convert::ASN1::asn_hexdump(\*STDOUT,$pdu);
     #	print "Response Perl:\n";
-    my $response = $LDAPResponse->decode($pdu);
     warn "Response: " . dump($response) if $debug{pkt};
 
     if ( defined $response->{protocolOp}->{searchResEntry} )
@@ -313,7 +313,7 @@ sub log_response
         #            warn "CACHE: no previous request for $response->{messageID}";
     }
     ##
-    $pdu = $LDAPResponse->encode($response);
+    my $pdu = $LDAPResponse->encode($response);
 
     #    warn "## response = ", dump($response);
 
