@@ -1,0 +1,29 @@
+$VAR1 = {
+          'searchRequest' => {
+                               'timeLimit' => 0,
+                               'baseObject' => 'o=exemple.com',
+                               'filter' => {
+                                             'and' => [
+                                                        {
+                                                          'equalityMatch' => {
+                                                                               'assertionValue' => 'Employee',
+                                                                               'attributeDesc' => 'objectClass'
+                                                                             }
+                                                        },
+                                                        {
+                                                          'equalityMatch' => {
+                                                                               'assertionValue' => 'foo@exemple.com',
+                                                                               'attributeDesc' => 'uid'
+                                                                             }
+                                                        }
+                                                      ]
+                                           },
+                               'sizeLimit' => 0,
+                               'typesOnly' => 0,
+                               'derefAliases' => 0,
+                               'attributes' => [],
+                               'scope' => 2
+                             },
+          'messageID' => 2
+        };
+
