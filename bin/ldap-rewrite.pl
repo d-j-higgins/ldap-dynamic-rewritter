@@ -31,49 +31,34 @@ use Net::LDAP::ASN qw(LDAPRequest LDAPResponse);
 use fields qw(socket target);
 use YAML qw/LoadFile/;
 use Carp;
+use File::Spec;
+use File::Basename;
 
 use lib 'lib';
-use ReqCache;
+require ReqCache;
 
 our $VERSION = '0.3';
 our $sel;            # IO::Select;
 our $server_sock;    # list of all sockets
 my %msgidcache;      # store messageids for cache association purpose
-
-$SIG{__DIE__} = sub { Carp::confess @_ };
-
-# debug classes
-my %debug = (
-    info   => 0,     #Generic info
-    warn   => 0,     #Generic warning
-    err    => 0,     #Generic error
-    pkt    => 1,     #packets
-    net    => 0,     #connections
-    cache  => 1,     #caching info
-    cache2 => 0,     #caching debug
-    filter => 0,     #dynamic filters
-);
-
 my $cache = new ReqCache;
-
-my $config = {
-    yaml_dir       => './yaml/',
-    outfilter_dir  => './outfilter/',
-    infilter_dir   => './infilter/',
-    listen         => shift @ARGV || ':1389',
-    upstream_ldap  => 'ldap.hp.com',
-    upstream_ssl   => 1,
-    overlay_prefix => 'ffzg-',
-    log_file       => 'log/ldap-rewrite.log',
-};
-
-my $SCRIPTDIR = `dirname \`readlink -m "$0"\``;
-$SCRIPTDIR = `readlink -m "$SCRIPTDIR/.."`;
-chomp($SCRIPTDIR);
-print "Moving to $SCRIPTDIR\n" if $debug{info};
-chdir("$SCRIPTDIR") || die("cannot chdir: $!");
-
 my $log_fh;
+
+# load config
+my $y      = LoadFile("./etc/config.yaml");
+my %debug  = %{ $y->{debug} };
+my $config = $y->{config};
+
+BEGIN
+{
+
+    # move to the proper relative directory
+    my $SCRIPTDIR = dirname( File::Spec->rel2abs($0) );
+    chdir("$SCRIPTDIR/..") || die("cannot chdir: $!");
+
+    $SIG{__DIE__} = sub { Carp::confess @_ };
+    $SIG{'__WARN__'} = sub { warn @_; main::log(@_); };
+}
 
 sub log
 {
@@ -86,16 +71,6 @@ sub log
     }
     $log_fh->autoflush(1);
     print $log_fh join( "\n", @_ ), "\n";
-}
-
-BEGIN
-{
-    $SIG{'__WARN__'} = sub { warn @_; main::log(@_); }
-}
-
-if ( !-d $config->{yaml_dir} )
-{
-    warn "DISABLE ", $config->{yaml_dir}, " data overlay" if $debug{warn};
 }
 
 sub handleserverdata
@@ -367,6 +342,11 @@ sub disconnect
     use warnings;
 
     # we have finished with the socket
+}
+
+if ( !-d $config->{yaml_dir} )
+{
+    warn "DISABLE ", $config->{yaml_dir}, " data overlay" if $debug{warn};
 }
 
 my $listenersock = IO::Socket::INET->new(
