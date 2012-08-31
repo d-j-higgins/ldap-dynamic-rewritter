@@ -20,11 +20,20 @@ sub filter
     my ( $self, $res ) = @_;
     warn "search gid filter";
 
-    warn Dumper($res);
+    #    warn Dumper($res);
 
     foreach my $op ( keys %{ $res->{searchRequest}->{filter} } )
     {
-        foreach my $cur ( @{ $res->{searchRequest}->{filter}->{$op} } )
+        my $oparr;
+        if ( ref $res->{searchRequest}->{filter}->{$op} eq 'HASH' )
+        {
+            $oparr = [ { $res->{searchRequest}->{filter}->{$op} } ];
+        }
+        else
+        {
+            $oparr = $res->{searchRequest}->{filter}->{$op};
+        }
+        foreach my $cur ( @{$oparr} )
         {
             next if ( $cur->{equalityMatch}->{attributeDesc} !~ /gidNumber/ );
 
@@ -47,6 +56,4 @@ sub filter
     return;
 
 }
-
 1;
-
