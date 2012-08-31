@@ -11,11 +11,11 @@
 # * rewrite search responses:
 # ** expand key:value pairs from hrEduPersonUniqueNumber into hrEduPersonUniqueNumber_key
 # ** augment response with yaml/dn.yaml data (for external data import)
-# 
-# Modified by Daniel Higgins <dhiggins@hp.com> 
-# * fix some socket-reading bugs for large server replies 
+#
+# Modified by Daniel Higgins <dhiggins@hp.com>
+# * fix some socket-reading bugs for large server replies
 # * simplify workflow
-# * implement dynamic filters support 
+# * implement dynamic filters support
 # * move original bind request and search response filtering to dynamic filters
 # * implement addGidNumber dynamic filter
 
@@ -25,21 +25,22 @@ use warnings;
 use IO::Select;
 use IO::Socket;
 use IO::Socket::SSL;
-use warnings;
 use Data::Dump qw/dump/;
 use Convert::ASN1 qw(asn_read);
 use Net::LDAP::ASN qw(LDAPRequest LDAPResponse);
-our $VERSION = '0.3';
 use fields qw(socket target);
 use YAML qw/LoadFile/;
 use Carp;
-our $sel; # IO::Select;
+
+use lib 'lib';
+
+our $VERSION = '0.3';
+our $sel;            # IO::Select;
 our $server_sock;    # list of all sockets
 
 $SIG{__DIE__} = sub { Carp::confess @_ };
 
 my $debug = 0;
-
 
 my $config = {
     yaml_dir       => './yaml/',
@@ -52,13 +53,14 @@ my $config = {
     log_file       => 'log/ldap-rewrite.log',
 };
 
-my $SCRIPTDIR= `dirname \`readlink -m "$0"\``;                                                                                         
-$SCRIPTDIR= `readlink -m "$SCRIPTDIR/.."`;                                                                                         
+my $SCRIPTDIR = `dirname \`readlink -m "$0"\``;
+$SCRIPTDIR = `readlink -m "$SCRIPTDIR/.."`;
 chomp($SCRIPTDIR);
 print "Moving to $SCRIPTDIR\n";
-chdir("$SCRIPTDIR") || die ("cannot chdir: $!"); 
+chdir("$SCRIPTDIR") || die("cannot chdir: $!");
 
 my $log_fh;
+
 sub log
 {
     return unless $config->{log_file};
@@ -81,7 +83,6 @@ if ( !-d $config->{yaml_dir} )
 {
     warn "DISABLE ", $config->{yaml_dir}, " data overlay";
 }
-
 
 sub handleserverdata
 {
@@ -141,14 +142,14 @@ sub log_request
     warn "## Received request" if $debug;
 
     # do dynamic filters
-    foreach my $filter (@{$config->{infilters}})
+    foreach my $filter ( @{ $config->{infilters} } )
     {
         warn( "running filter: " . $filter );
 
         eval {
             my $filterobj = new $filter;
             $filterobj->filter($request);
-            $filtered=1;
+            $filtered = 1;
         };
         if ($@)
         {
@@ -159,7 +160,6 @@ sub log_request
     $pdu = $LDAPRequest->encode($request) if $filtered;
     return $pdu;
 }
-
 
 sub load_filters
 {
@@ -205,7 +205,7 @@ sub log_response
         # searchResEntry has format { attributes => [ { type => ATTRNAME, vals => [actual values] } , ... ], objectName => 'DN' }
 
         # do dynamic filters
-        foreach my $filter (@{$config->{outfilters}})
+        foreach my $filter ( @{ $config->{outfilters} } )
         {
             warn( "running filter: " . $filter );
 
@@ -259,8 +259,6 @@ sub log_response
 
     return $pdu;
 }
-
-
 
 sub connect_to_server
 {
@@ -318,11 +316,11 @@ my $listenersock = IO::Socket::INET->new(
     LocalAddr => $config->{listen},
 ) || die "can't open listen socket: $!";
 
-$sel = IO::Select->new($listenersock);
-$config->{outfilters}=[];
-$config->{infilters}=[];
-load_filters( $config->{outfilter_dir},$config->{outfilters} );
-load_filters( $config->{infilter_dir}, $config->{infilters} );
+$sel                  = IO::Select->new($listenersock);
+$config->{outfilters} = [];
+$config->{infilters}  = [];
+load_filters( $config->{outfilter_dir}, $config->{outfilters} );
+load_filters( $config->{infilter_dir},  $config->{infilters} );
 warn "# config = ", dump($config);
 
 while ( my @ready = $sel->can_read )
