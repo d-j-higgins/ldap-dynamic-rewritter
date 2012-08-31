@@ -33,10 +33,12 @@ use YAML qw/LoadFile/;
 use Carp;
 
 use lib 'lib';
+use ReqCache;
 
 our $VERSION = '0.3';
 our $sel;            # IO::Select;
 our $server_sock;    # list of all sockets
+my %msgidcache;      # store messageids for cache association purpose
 
 $SIG{__DIE__} = sub { Carp::confess @_ };
 
@@ -128,25 +130,48 @@ sub handleclientreq
         warn "client closed connection\n" if $debug{net};
         return 0;
     }
-    $reqpdu = log_request($reqpdu);
+    my $decodedpdu = $LDAPRequest->decode($reqpdu);
+    $decodedpdu = log_request($decodedpdu);
 
-    # send to server
-    print $serversocket $reqpdu || return 0;
+    # check the cache for this request. forward to server if it's not found, or to client if it is
+    my ( $key, $cdata ) = $cache->get( $decodedpdu->{searchRequest} );
+    if ( !$cdata )
+    {
+        warn "Request not cached" if $debug{cache};
+
+        # send to server
+        $msgidcache{ $decodedpdu->{messageID} } = $key;
+
+        warn dump( \%msgidcache, "nocache", $key, $decodedpdu->{messageID} ) if $debug{cache2};
+        print $serversocket $LDAPRequest->encode($decodedpdu) || return 0;
+    }
+    else
+    {
+        warn "Request IS cached" if $debug{cache};
+
+        # return the cached response, but replace the messageID since it's obviously outdated now
+        foreach my $response (@$cdata)
+        {
+            $response->{messageID} = $decodedpdu->{messageID};
+            warn "MSGID:" . $decodedpdu->{messageID} . " key: $key" if $debug{cache};
+            warn dump( "pkt", $decodedpdu, $response ) if $debug{cache};
+            print $clientsocket $LDAPResponse->encode($response);
+        }
+    }
 
     return 1;
 }
 
 sub log_request
 {
-    my $pdu = shift;
+    my $request = shift;
 
-    die "empty pdu" unless $pdu;
+    die "empty pdu" unless $request;
 
     #	print '-' x 80,"\n";
     #	print "Request ASN 1:\n";
     #	Convert::ASN1::asn_hexdump(\*STDOUT,$pdu);
     #	print "Request Perl:\n";
-    my $request = $LDAPRequest->decode($pdu);
     my $filtered;
 
     # WARN: this has security implication, we do NOT want to log this packet ever, but it is useful for writing infilters
@@ -170,8 +195,7 @@ sub log_request
         }
     }
 
-    $pdu = $LDAPRequest->encode($request) if $filtered;
-    return $pdu;
+    return $request;
 }
 
 sub load_filters
@@ -266,8 +290,30 @@ sub log_response
             }
         }
 
-        $pdu = $LDAPResponse->encode($response);
     }
+    ##cache storage
+    if ( $_ = $msgidcache{ $response->{messageID} } )
+    {
+        warn "CACHE: Previous request: $_" if $debug{cache};
+        warn dump($response) if $debug{cache2};
+        my $cached = $cache->get($_);
+        if ($cached)
+        {
+            push @$cached, $response;
+        }
+        else
+        {
+            $cached = [$response];
+        }
+        $cache->set( $_, $cached );
+    }
+    else
+    {
+
+        #            warn "CACHE: no previous request for $response->{messageID}";
+    }
+    ##
+    $pdu = $LDAPResponse->encode($response);
 
     #    warn "## response = ", dump($response);
 
