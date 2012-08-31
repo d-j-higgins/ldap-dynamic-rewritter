@@ -141,7 +141,7 @@ sub handleclientreq
         warn "Request not cached" if $debug{cache};
 
         # send to server
-        $msgidcache{ $decodedpdu->{messageID} } = $key;
+        $msgidcache{ $clientsocket."-".$decodedpdu->{messageID} } = $key;
 
         warn dump( \%msgidcache, "nocache", $key, $decodedpdu->{messageID} ) if $debug{cache2};
         print $serversocket $LDAPRequest->encode($decodedpdu) || return 0;
@@ -292,7 +292,7 @@ sub log_response
 
     }
     ##cache storage
-    if ( $_ = $msgidcache{ $response->{messageID} } )
+    if ( $_ = $msgidcache{$clientsocket."-".$response->{messageID} } )
     {
         warn "CACHE: Previous request: $_" if $debug{cache};
         warn dump($response) if $debug{cache2};
