@@ -1,3 +1,4 @@
 log/*.log
 *.swp
 */*.swp
+etc/config.yaml

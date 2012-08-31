@@ -1,0 +1,27 @@
+config:
+    yaml_dir       : './yaml/'
+    outfilter_dir  : './outfilter/'
+    infilter_dir   : './infilter/'
+    listen         : ':389'
+    upstream_ldap  : 'exemple.com'
+    upstream_ssl   : 1
+    log_file       : 'log/ldap-rewrite.log'
+
+#Generic info
+#Generic warning
+#Generic error
+#packets
+#connections
+#caching info
+#caching debug
+#dynamic filters
+debug:
+    info   : 1     
+    warn   : 1     
+    err    : 1     
+    pkt    : 0     
+    net    : 0     
+    cache  : 0     
+    cache2 : 0     
+    filter : 0     
+

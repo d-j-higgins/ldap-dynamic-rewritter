@@ -1,0 +1,58 @@
+# BIND request   -------------------------------------------------------->>>
+Request: {
+  bindRequest => { authentication => { simple => "" }, name => "", version => 3 },
+  messageID   => 1,
+}
+
+#BIND response  <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+{
+  messageID  => 1,
+  protocolOp => {
+                  bindResponse => { errorMessage => "", matchedDN => "", resultCode => 0 },
+                },
+} 
+
+
+
+# search req -------------------------------------------------------->>>
+{
+  messageID     => 2,
+  searchRequest => {
+                     attributes   => [],
+                     baseObject   => "o=exemple.com"
+                     derefAliases => 0,
+                     filter       => { present => "objectclass" },
+                     scope        => 2,
+                     sizeLimit    => 0,
+                     timeLimit    => 0,
+                     typesOnly    => 0,
+                   },
+}
+
+# search response <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+{
+  messageID  => 2,
+  protocolOp => {
+                  searchResEntry => {
+                    attributes => [
+                                    { type => "objectClass", vals => ["top", "groupOfNames", "PosixGroup"] },
+                                  ],
+                    objectName => "cn=foo,ou=Groups,o=exemple.com",
+                  },
+                },
+}
+# more than 1 if needed
+
+
+# end of search response <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+{
+  messageID  => 2,
+  protocolOp => {
+                  searchResDone => { errorMessage => "", matchedDN => "", resultCode => 0 },
+                },
+}
+
+
+#UNBIND request -------------------------------------------------------->>>
+{ messageID => 3, unbindRequest => 1 } 
