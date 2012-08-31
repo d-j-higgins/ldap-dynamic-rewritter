@@ -40,7 +40,19 @@ our $server_sock;    # list of all sockets
 
 $SIG{__DIE__} = sub { Carp::confess @_ };
 
-my $debug = 0;
+# debug classes
+my %debug = (
+    info   => 0,     #Generic info
+    warn   => 0,     #Generic warning
+    err    => 0,     #Generic error
+    pkt    => 0,     #packets
+    net    => 0,     #connections
+    cache  => 1,     #caching info
+    cache2 => 0,     #caching debug
+    filter => 0,     #dynamic filters
+);
+
+my $cache = new ReqCache;
 
 my $config = {
     yaml_dir       => './yaml/',
@@ -56,7 +68,7 @@ my $config = {
 my $SCRIPTDIR = `dirname \`readlink -m "$0"\``;
 $SCRIPTDIR = `readlink -m "$SCRIPTDIR/.."`;
 chomp($SCRIPTDIR);
-print "Moving to $SCRIPTDIR\n";
+print "Moving to $SCRIPTDIR\n" if $debug{info};
 chdir("$SCRIPTDIR") || die("cannot chdir: $!");
 
 my $log_fh;
@@ -81,7 +93,7 @@ BEGIN
 
 if ( !-d $config->{yaml_dir} )
 {
-    warn "DISABLE ", $config->{yaml_dir}, " data overlay";
+    warn "DISABLE ", $config->{yaml_dir}, " data overlay" if $debug{warn};
 }
 
 sub handleserverdata
@@ -93,7 +105,7 @@ sub handleserverdata
     asn_read( $serversocket, my $respdu );
     if ( !$respdu )
     {
-        warn "server closed connection\n";
+        warn "server closed connection\n" if $debug{net};
         return 0;
     }
     $respdu = log_response($respdu);
@@ -113,7 +125,7 @@ sub handleclientreq
     asn_read( $clientsocket, my $reqpdu );
     if ( !$reqpdu )
     {
-        warn "client closed connection\n";
+        warn "client closed connection\n" if $debug{net};
         return 0;
     }
     $reqpdu = log_request($reqpdu);
@@ -139,12 +151,13 @@ sub log_request
 
     # WARN: this has security implication, we do NOT want to log this packet ever, but it is useful for writing infilters
     #    warn "## request = ", dump($request);
-    warn "## Received request" if $debug;
+    warn "## Received request" if $debug{net};
+    warn "Request: " . dump($request) if $debug{pkt};
 
     # do dynamic filters
     foreach my $filter ( @{ $config->{infilters} } )
     {
-        warn( "running filter: " . $filter );
+        warn( "running filter: " . $filter ) if $debug{filter};
 
         eval {
             my $filterobj = new $filter;
@@ -153,7 +166,7 @@ sub log_request
         };
         if ($@)
         {
-            warn "Unable to run filter $filter: $@";
+            warn "Unable to run filter $filter: $@" if $debug{filter};
         }
     }
 
@@ -170,12 +183,12 @@ sub load_filters
     {
         $file =~ m/^([^\.]+)\.pm$/;
         my $filter = $1;
-        warn( "load filter: " . $filter );
+        warn( "load filter: " . $filter ) if $debug{filter};
         eval { require "$dir/$file"; };
 
         if ($@)
         {
-            warn "Unable to load $file: $@";
+            warn "Unable to load $file: $@" if $debug{filter};
         }
         else
         {
@@ -196,18 +209,19 @@ sub log_response
     #	Convert::ASN1::asn_hexdump(\*STDOUT,$pdu);
     #	print "Response Perl:\n";
     my $response = $LDAPResponse->decode($pdu);
+    warn "Response: " . dump($response) if $debug{pkt};
 
     if ( defined $response->{protocolOp}->{searchResEntry} )
     {
         my $uid = $response->{protocolOp}->{searchResEntry}->{objectName};
-        warn "## objectName $uid";
+        warn "## objectName $uid" if $debug{filter};
 
         # searchResEntry has format { attributes => [ { type => ATTRNAME, vals => [actual values] } , ... ], objectName => 'DN' }
 
         # do dynamic filters
         foreach my $filter ( @{ $config->{outfilters} } )
         {
-            warn( "running filter: " . $filter );
+            warn( "running filter: " . $filter ) if $debug{filter};
 
             eval {
                 my $filterobj = new $filter;
@@ -215,7 +229,7 @@ sub log_response
             };
             if ($@)
             {
-                warn "Unable to run filter $filter: $@";
+                warn "Unable to run filter $filter: $@" if $debug{filter};
             }
         }
 
@@ -238,7 +252,7 @@ sub log_response
             next unless -e $full_path;
 
             my $data = LoadFile($full_path);
-            warn "# $full_path yaml = ", dump($data);
+            warn "# $full_path yaml = ", dump($data) if $debug{filter};
 
             foreach my $type ( keys %$data )
             {
@@ -278,11 +292,11 @@ sub connect_to_server
 
     if ( !$sock )
     {
-        warn "can't open ", $config->{upstream_ldap}, " $!\n";
+        warn "can't open ", $config->{upstream_ldap}, " $!\n" if $debug{net};
         return undef;
     }
 
-    warn "## connected to ", $sock->peerhost, ":", $sock->peerport, "\n";
+    warn "## connected to ", $sock->peerhost, ":", $sock->peerport, "\n" if $debug{net};
     return $sock;
 }
 
@@ -292,7 +306,7 @@ sub disconnect
 
     # one of two connection has closed. terminate
     no warnings;
-    warn "## remove $fh " . time;
+    warn "## remove $fh " . time if $debug{net};
 
     my $srv;
     my $client;
@@ -325,10 +339,10 @@ warn "# config = ", dump($config);
 
 while ( my @ready = $sel->can_read )
 {
-    warn "## fh poll " . time if $debug;
+    warn "## fh poll " . time if $debug{net};
     foreach my $fh (@ready)
     {
-        warn "## fh ready $fh " . time if $debug;
+        warn "## fh ready $fh " . time if $debug{net};
         if ( $fh == $listenersock )
         {
 
@@ -336,13 +350,13 @@ while ( my @ready = $sel->can_read )
             my $psock = $listenersock->accept;
             $server_sock->{$psock} = { client => $psock };
             $sel->add($psock);
-            warn "## add $psock " . time if $debug;
+            warn "## add $psock " . time if $debug{net};
         }
         elsif ( $fh == $server_sock->{$fh}->{client} )
         {
 
             # a client socket is ready, a request has come in on it
-            warn "## fh new client $fh " . time;
+            warn "## fh new client $fh " . time if $debug{net};
 
             my $t = { server => connect_to_server, client => $fh };
             if ( !$t->{server} )
@@ -357,14 +371,14 @@ while ( my @ready = $sel->can_read )
             {
                 disconnect($fh);
             }
-            warn "## handled $fh " . time if $debug;
+            warn "## handled $fh " . time if $debug{net};
 
             # server socket did not disconnect, meaning the server has more data to send to us. add the socket to the selector
             $sel->add( $server_sock->{$fh}->{server} );
         }
         else
         {
-            warn "unrequested server data " . time if $debug;
+            warn "unrequested server data " . time if $debug{net};
             if ( !handleserverdata( $server_sock->{$fh}->{client}, $server_sock->{$fh}->{server} ) )
             {
                 disconnect($fh);

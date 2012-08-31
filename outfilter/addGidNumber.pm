@@ -17,7 +17,7 @@ sub new()
 sub filter
 {
     my ( $self, $res ) = @_;
-    warn "addgid filter";
+    #warn "addgid filter";
 
     my $found = 0;
     foreach my $attr ( @{ $res->{attributes} } )
@@ -33,7 +33,7 @@ sub filter
 
     if ( !$found )
     {
-        warn "no gid number found, adding";
+    #    warn "no gid number found, adding";
         push @{ $res->{attributes} }, { type => "gidNumber",   vals => [ GidCache::encodeGidNumber( GidCache::getGroupGid( $res->{objectName} ) ) ] };
         push @{ $res->{attributes} }, { type => "objectClass", vals => ['posixGroup'] };
     }

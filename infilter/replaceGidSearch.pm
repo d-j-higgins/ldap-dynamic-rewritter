@@ -18,7 +18,7 @@ sub new()
 sub filter
 {
     my ( $self, $res ) = @_;
-    warn "search gid filter";
+#    warn "search gid filter";
 
     #    warn Dumper($res);
 
@@ -52,7 +52,7 @@ sub filter
 
     }
 
-    warn Dumper($res);
+#    warn Dumper($res);
     return;
 
 }
