@@ -57,6 +57,7 @@ BEGIN
     chdir("$SCRIPTDIR/..") || die("cannot chdir: $!");
 
     $SIG{__DIE__} = sub { Carp::confess @_ };
+#    $SIG{__WARN__} = sub { Carp::cluck @_ };
     $SIG{'__WARN__'} = sub { warn @_; main::log(@_); };
 }
 
@@ -353,14 +354,22 @@ sub disconnect
 
     my $srv;
     my $client;
-    $srv    = $server_sock->{$fh}->{server};
-    $client = $server_sock->{$fh}->{client};
-    $sel->remove($srv);
-    $sel->remove($client);
-    $srv->close    if $srv;
-    $client->close if $client;
-    delete $server_sock->{$client};
-    delete $server_sock->{$srv};
+    $srv    = $server_sock->{ endp($fh) }->{server};
+    $client = $server_sock->{ endp($fh) }->{client};
+
+    if ($srv)
+    {
+        $sel->remove($srv);
+        $srv->close;
+        delete $server_sock->{ endp($srv) };
+    }
+
+    if ($client)
+    {
+        $sel->remove($client);
+        $client->close;
+        delete $server_sock->{ endp($client) };
+    }
     use warnings;
 
     # we have finished with the socket
@@ -371,7 +380,7 @@ sub handleClientConnection
     my $sel = shift;    # IO::Selector
     my $fh  = shift;    # socket to handle
 
-    my $clientreq = handleclientreq( $server_sock->{$fh}->{client}, undef );
+    my $clientreq = handleclientreq( $server_sock->{endp($fh)}->{client}, undef );
     if ( !defined($clientreq) )
     {
         # handleclientreq returned undef, meaning it handled all the work itself
@@ -386,18 +395,27 @@ sub handleClientConnection
         disconnect( $t->{client} );
         return 0;
     }
-    $server_sock->{ $t->{client} } = $t;
-    $server_sock->{ $t->{server} } = $t;
+    $server_sock->{ endp($t->{client}) } = $t;
+    $server_sock->{ endp($t->{server}) } = $t;
 
     # and send the data
     print $srv $clientreq;
 
-    warn "## handled $fh " . time if $debug{net};
+    warn "## handled ".endp($fh)." " . time if $debug{net};
 
     # we should also listen for the server's reply
-    $sel->add( $server_sock->{$fh}->{server} );
+    $sel->add( $srv );
 
     return 1;
+}
+
+sub endp
+{
+    my $fh = shift;
+
+    no warnings;
+    return undef if ! $fh;
+    return $fh->peerhost . ":" . $fh->peerport;
 }
 
 
@@ -426,28 +444,28 @@ while ( my @ready = $sel->can_read )
     warn "## fh poll " . time if $debug{net};
     foreach my $fh (@ready)
     {
-        warn "## fh ready $fh " . time if $debug{net};
+        warn "## fh ready ". endp($fh)." " . time if $debug{net};
         if ( $fh == $listenersock )
         {
 
             # listener is ready, meaning we have a new connection req waiting
             my $psock = $listenersock->accept;
-            $server_sock->{$psock} = { client => $psock };
+            $server_sock->{endp($psock)} = { client => $psock };
             $sel->add($psock);
-            warn "## add $psock " . time if $debug{net};
+            warn "## add ".endp($psock)." " . time if $debug{net};
         }
-        elsif ( $fh == $server_sock->{$fh}->{client} )
+        elsif ( endp($fh) eq endp($server_sock->{endp($fh)}->{client}) )
         {
 
             # a client socket is ready, a request has come in on it
-            warn "## fh new client $fh " . time if $debug{net};
+            warn "## fh new client ".endp($fh)." " . time if $debug{net};
             handleClientConnection($sel,$fh);
 
         }
         else
         {
-            warn "unrequested server data " . time if $debug{net};
-            if ( !handleserverdata( $server_sock->{$fh}->{client}, $server_sock->{$fh}->{server} ) )
+            warn "unrequested server data ".endp($fh)." " . time if $debug{net};
+            if ( !handleserverdata( $server_sock->{endp($fh)}->{client}, $server_sock->{endp($fh)}->{server} ) )
             {
                 disconnect($fh);
             }
