@@ -14,7 +14,7 @@ sub new
     $self = { %$self, %args };
 
     $self->{expire} ||= 3600;
-    $self->{c} = new Cache::FileCache( { default_expires_in => $self->{expire} . ' seconds', autopurge_on_set => 0, namespace => "ldap", cache_root => "./cache" } );
+    $self->{c} = new Cache::FileCache( { default_expires_in => $self->{expire} . ' seconds', autopurge_on_set => 0, auto_purge_interval=> $self->{expire}/2, namespace => "ldap", cache_root => "./cache" } );
     bless $self, $class;
 
     return $self;
