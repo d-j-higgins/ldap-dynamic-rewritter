@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Data::Dumper;
 use Cache::FileCache;
-use YAML qw/freeze/;
+use Storable qw/freeze/;
 use Digest::SHA1 qw/sha1_base64/;
 
 sub new
