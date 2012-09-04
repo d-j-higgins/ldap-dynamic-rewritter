@@ -104,7 +104,9 @@ sub handleclientreq
     if ( !$reqpdu )
     {
         warn "client closed connection\n" if $debug{net};
-        return 0;
+        disconnect($clientsocket);
+        disconnect($serversocket);
+        return undef;
     }
     my $decodedpdu = $LDAPRequest->decode($reqpdu);
     $decodedpdu = log_request($clientsocket,$serversocket,$decodedpdu);
@@ -119,7 +121,7 @@ sub handleclientreq
         $msgidcache{ $clientsocket."-".$decodedpdu->{messageID} } = $key;
 
         warn dump( \%msgidcache, "nocache", $key, $decodedpdu->{messageID} ) if $debug{cache2};
-        print $serversocket $LDAPRequest->encode($decodedpdu) || return 0;
+        return $LDAPRequest->encode($decodedpdu);
     }
     else
     {
@@ -135,7 +137,7 @@ sub handleclientreq
         }
     }
 
-    return 1;
+    return undef;
 }
 
 sub log_request
@@ -344,6 +346,42 @@ sub disconnect
     # we have finished with the socket
 }
 
+sub handleClientConnection
+{
+    my $sel = shift;    # IO::Selector
+    my $fh  = shift;    # socket to handle
+
+    my $clientreq = handleclientreq( $server_sock->{$fh}->{client}, undef );
+    if ( !defined($clientreq) )
+    {
+        # handleclientreq returned undef, meaning it handled all the work itself
+        return 1;
+    }
+
+    # we have data to proxy, connect to the server now. 
+    my $srv= connect_to_server;
+    my $t = { server => $srv, client => $fh };
+    if ( !$t->{server} )
+    {
+        disconnect( $t->{client} );
+        return 0;
+    }
+    $server_sock->{ $t->{client} } = $t;
+    $server_sock->{ $t->{server} } = $t;
+
+    # and send the data
+    print $srv $clientreq;
+
+    warn "## handled $fh " . time if $debug{net};
+
+    # we should also listen for the server's reply
+    $sel->add( $server_sock->{$fh}->{server} );
+
+    return 1;
+}
+
+
+
 if ( !-d $config->{yaml_dir} )
 {
     warn "DISABLE ", $config->{yaml_dir}, " data overlay" if $debug{warn};
@@ -383,24 +421,8 @@ while ( my @ready = $sel->can_read )
 
             # a client socket is ready, a request has come in on it
             warn "## fh new client $fh " . time if $debug{net};
+            handleClientConnection($sel,$fh);
 
-            my $t = { server => connect_to_server, client => $fh };
-            if ( !$t->{server} )
-            {
-                disconnect( $t->{client} );
-                next;
-            }
-
-            $server_sock->{ $t->{client} } = $t;
-            $server_sock->{ $t->{server} } = $t;
-            if ( !handleclientreq( $server_sock->{$fh}->{client}, $server_sock->{$fh}->{server} ) )
-            {
-                disconnect($fh);
-            }
-            warn "## handled $fh " . time if $debug{net};
-
-            # server socket did not disconnect, meaning the server has more data to send to us. add the socket to the selector
-            $sel->add( $server_sock->{$fh}->{server} );
         }
         else
         {
@@ -412,5 +434,6 @@ while ( my @ready = $sel->can_read )
         }
     }
 }
+
 
 1;
