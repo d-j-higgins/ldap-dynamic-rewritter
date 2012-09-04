@@ -109,6 +109,26 @@ sub handleclientreq
         return undef;
     }
     my $decodedpdu = $LDAPRequest->decode($reqpdu);
+
+    if ( $debug{pkt} )
+    {
+        print '-' x 80, "\n";
+        print "Request ASN 1:\n";
+        Convert::ASN1::asn_hexdump( \*STDOUT, $reqpdu );
+        print "Request Perl:\n";
+        print dump($decodedpdu);
+    }
+
+    if ( $decodedpdu->{extendedReq} && $decodedpdu->{extendedReq}->{requestName} eq '1.3.6.1.4.1.1466.20037' )
+        {
+        # this is an SSL request. not implemented yet
+        #TODO
+        disconnect($clientsocket);
+        disconnect($serversocket);
+        warn("CRIT: SSL/TLS request but this feature is not implemented");
+        return;
+        }
+
     $decodedpdu = log_request($clientsocket,$serversocket,$decodedpdu);
 
     # check the cache for this request. forward to server if it's not found, or to client if it is
