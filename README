@@ -42,3 +42,14 @@ If you want to expose MySQL Koha database as LDAP server start:
 Home page for this program (please register your usage) is:
 
   https://www.ohloh.net/p/virtual-ldap
+
+
+
+DEPENDS
+apt-get install libio-socket-ssl-perl libdata-dump-perl libconvert-asn1-perl libnet-ldap-perl libyaml-perl
+
+Further notes and recommandation
+
+this ldap rewriter does not currently implement SSL. it is highly recommanded to bind it to a local port only and run an openssl instance in front of it that does implement SSL
+a sample config is provided in slapd.conf.sample
+
