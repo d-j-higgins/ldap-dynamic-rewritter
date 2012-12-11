@@ -138,9 +138,15 @@ sub handleclientreq
     {
         warn "Request not cached" if $debug{cache};
 
-        # send to server
-        $msgidcache{ $clientsocket."-".$decodedpdu->{messageID} } = $key;
+	# store the messageid so that we can cache the response later
+	# small problem if we store the bindrequests: we will remember the result later no matter the actual password: ignore these
+	if (! $decodedpdu->{bindRequest})
+		{
+        	warn "Caching msgid" if $debug{cache};
+	        $msgidcache{ $clientsocket."-".$decodedpdu->{messageID} } = $key;
+		}
 
+        # send to server
         warn dump( \%msgidcache, "nocache", $key, $decodedpdu->{messageID} ) if $debug{cache2};
         return $LDAPRequest->encode($decodedpdu);
     }
