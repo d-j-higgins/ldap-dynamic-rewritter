@@ -366,22 +366,29 @@ sub disconnect
     warn "## remove $fh " . time if $debug{net};
 
     my $srv;
-    my $client;
-    $srv    = $server_sock->{ endp($fh) }->{server};
-    $client = $server_sock->{ endp($fh) }->{client};
+    my $client; 
+
+    my $item= $server_sock->{endp($fh)};
+    $srv    = $item->{server};
+    $client = $item->{client};
+    my $tmpendp;
 
     if ($srv)
     {
+    $tmpendp=endp($srv);
+    warn "removed srv ".$tmpendp if $debug{net};
         $sel->remove($srv);
         $srv->close;
-        delete $server_sock->{ endp($srv) };
+        delete $server_sock->{ $tmpendp };
     }
 
     if ($client)
     {
+    $tmpendp=endp($client);
+    warn "removed client ".$tmpendp if $debug{net};
         $sel->remove($client);
         $client->close;
-        delete $server_sock->{ endp($client) };
+        delete $server_sock->{ $tmpendp };
     }
     use warnings;
 
