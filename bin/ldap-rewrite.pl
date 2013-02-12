@@ -465,7 +465,15 @@ load_filters( $config->{infilter_dir},  $config->{infilters} );
 warn "# config = ", dump($config);
 
 while ( my @ready = $sel->can_read )
-{
+{ 
+    # on long running server, msgidcache will fill up the memory
+    # this is a crude hack to get it back under control: when the server is idle, flush the cache
+    if ( scalar keys %$server_sock == 0)
+	{
+	%msgidcache=();
+	}
+
+
     warn "## fh poll " . time if $debug{net};
     foreach my $fh (@ready)
     {
