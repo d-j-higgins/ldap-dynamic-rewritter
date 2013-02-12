@@ -408,16 +408,21 @@ sub handleClientConnection
     }
 
     # we have data to proxy, connect to the server now. 
-    my $srv= connect_to_server;
-    my $t = { server => $srv, client => $fh };
-    if ( !$t->{server} )
-    {
-        disconnect( $t->{client} );
-        return 0;
-    }
+    # if we don't already have a socket connection
+    my $srv = $server_sock->{endp($fh)}->{server} ;
+    if ( !$srv )
+     {
+     $srv= connect_to_server;
+     my $t = { server => $srv, client => $fh };
+     if ( !$t->{server} )
+         {
+             disconnect( $t->{client} );
+             return 0;
+         }
+    
     $server_sock->{ endp($t->{client}) } = $t;
     $server_sock->{ endp($t->{server}) } = $t;
-
+     }
     # and send the data
     print $srv $clientreq;
 
@@ -435,7 +440,7 @@ sub endp
 
     no warnings;
     return undef if ! $fh;
-    return $fh->peerhost . ":" . $fh->peerport;
+    return $fh->peerhost . ":" . $fh->peerport.":".$fh->sockport;
 }
 
 
