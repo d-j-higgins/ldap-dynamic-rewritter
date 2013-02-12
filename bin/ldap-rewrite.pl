@@ -130,6 +130,13 @@ sub handleclientreq
         return;
         }
 
+    if ( $decodedpdu->{unbindRequest} == 1)
+    {
+    warn "Client requested unbind (disconnect)" if $debug{net};
+        disconnect($clientsocket);
+        disconnect($serversocket);
+    return undef;
+    }
     $decodedpdu = log_request($clientsocket,$serversocket,$decodedpdu);
 
     # check the cache for this request. forward to server if it's not found, or to client if it is
