@@ -140,7 +140,14 @@ sub handleclientreq
     $decodedpdu = log_request($clientsocket,$serversocket,$decodedpdu);
 
     # check the cache for this request. forward to server if it's not found, or to client if it is
-    my ( $key, $cdata ) = $cache->get( $decodedpdu->{searchRequest} );
+    my $key;
+    my $cdata; 
+    # only check the cache for search requests
+    if ($decodedpdu->{searchRequest})
+	{
+    	( $key, $cdata ) = $cache->get( $decodedpdu->{searchRequest} );
+	}
+
     if ( !$cdata )
     {
         warn "Request not cached" if $debug{cache};
@@ -155,7 +162,8 @@ sub handleclientreq
 
         # send to server
         warn dump( \%msgidcache, "nocache", $key, $decodedpdu->{messageID} ) if $debug{cache2};
-        return $LDAPRequest->encode($decodedpdu);
+        my $eres= $LDAPRequest->encode($decodedpdu);
+        return $eres;
     }
     else
     {
