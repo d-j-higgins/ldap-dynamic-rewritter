@@ -22,6 +22,9 @@ sub filter
 
     #    warn Dumper($res);
 
+    return if (! $res->{searchRequest} ); # no search request, nothing to filter
+    return if (! $res->{searchRequest}->{filter} ); # no filter in search request, nothing to rewrite
+
     foreach my $op ( keys %{ $res->{searchRequest}->{filter} } )
     {
         my $oparr;
