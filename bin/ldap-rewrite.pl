@@ -211,6 +211,16 @@ sub log_request
         {
             warn "Unable to run filter $filter: $@" if $debug{filter};
         }
+
+	if ( $config->{filtervalidate} == 1 )
+		{
+		my $req= $LDAPRequest->encode($request);
+			if (! defined($req))
+				{
+				die("ERROR: after running filter $filter, the request does not compile anymore! this probably means the filter corrupted the data structure!");
+			
+				}
+		}
     }
 
     return $request;
@@ -274,6 +284,14 @@ sub log_response
             {
                 warn "Unable to run filter $filter: $@" if $debug{filter};
             }
+	if ( $config->{filtervalidate} == 1 )
+		{
+		my $eres= $LDAPResponse->encode($response);
+			if (! defined($eres))
+				{
+				die("WARNING: after running filter $filter, the response does not compile anymore!");
+				}
+		}
         }
 
         # do YAML attributes

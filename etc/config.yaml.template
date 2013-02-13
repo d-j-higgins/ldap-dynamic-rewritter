@@ -6,6 +6,7 @@ config:
     upstream_ldap  : 'exemple.com'
     upstream_ssl   : 1
     log_file       : 'log/ldap-rewrite.log'
+    filtervalidate : 1
 
 #Generic info
 #Generic warning
