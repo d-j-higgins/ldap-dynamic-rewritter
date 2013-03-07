@@ -21,6 +21,7 @@ debug:
     warn   : 1     
     err    : 1     
     pkt    : 0     
+    pktsecure    : 0     
     net    : 0     
     cache  : 0     
     cache2 : 0     

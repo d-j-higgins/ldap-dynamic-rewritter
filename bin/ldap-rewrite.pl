@@ -45,9 +45,9 @@ my $cache = new ReqCache;
 my $log_fh;
 
 # load config
-my $y      = LoadFile("./etc/config.yaml");
-my %debug  = %{ $y->{debug} };
-my $config = $y->{config};
+our %debug ;
+our $config ;
+loadconfig();
 
 BEGIN
 {
@@ -61,6 +61,16 @@ BEGIN
     $SIG{'__WARN__'} = sub { warn @_; main::log(@_); };
 }
 
+sub loadconfig
+{
+
+my $y      = LoadFile("./etc/config.yaml");
+%debug  = %{ $y->{debug} };
+$config = $y->{config};
+$config->{last}=time();
+#warn "reloading config\n";
+}
+
 sub log
 {
     return unless $config->{log_file};
@@ -71,7 +81,7 @@ sub log
         print $log_fh "# " . time;
     }
     $log_fh->autoflush(1);
-    print $log_fh join( "\n", @_ ), "\n";
+    print $log_fh localtime()." - ".join( "\n".localtime()." - ", @_ ), "\n";
 }
 
 sub handleserverdata
@@ -196,7 +206,7 @@ sub log_request
     #	print "Request Perl:\n";
 
     warn "## Received request" if $debug{net};
-    warn "Request: " . dump($request) if $debug{pkt};
+    warn "Request: " . dump($request) if $debug{pktsecure};
 
     # do dynamic filters
     foreach my $filter ( @{ $config->{infilters} } )
@@ -490,8 +500,16 @@ load_filters( $config->{outfilter_dir}, $config->{outfilters} );
 load_filters( $config->{infilter_dir},  $config->{infilters} );
 warn "# config = ", dump($config);
 
+
+
 while ( my @ready = $sel->can_read )
 { 
+    if ($config->{last}+15<= time())
+	{
+	# reload config every 15 seconds, subject to connections being made
+	# this allows changing log levels on the fly
+	loadconfig();
+	}
     # on long running server, msgidcache will fill up the memory
     # this is a crude hack to get it back under control: when the server is idle, flush the cache
     if ( scalar keys %$server_sock == 0)
