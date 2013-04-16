@@ -1,4 +1,4 @@
-this code is GPL-V3
+this code is licensed under the same license as Perl (Dual license Artistic, GPL)
 
 basic ldap-rewrite.pl and associated libraries copyright rot13.org
 bug fixes and dynamic attribute filtering (outfilters) copyright 2012 Hewlett-Packard Development Company, L.P - written by Daniel Higgins (dhiggins@hp.com)

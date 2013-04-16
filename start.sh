@@ -6,7 +6,7 @@ FILE="/tmp/ldap-rewriter.pid";
          SCRIPTDIR=`readlink -f \`dirname $0\``
          cd $SCRIPTDIR
 
-         log=/var/log/ldap-rewrite.log
+         log=./main-ldap-rewrite.log
          while true; do ./bin/ldap-rewrite.pl  | tee -a $log; done
         )&
 
