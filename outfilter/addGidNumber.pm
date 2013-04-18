@@ -1,4 +1,8 @@
 package addGidNumber;
+# adds a gidNumber to every entry (as well as a posixGroup objectclass)
+# this is to satisfy things which REQUIRES the gid to be present when your ldap server does not provide it: ie: web authentication using pam_ldap in nginx
+
+# the gid generated will be unique per entry and consistent across calls (at least until somebody deletes the database of local gid ...)
 
 use lib 'lib/';
 use GidCache;

@@ -1,4 +1,6 @@
 package replaceGidSearch;
+# due to the outfilter that adds gid to each groups, doing a group search by gid would not work
+# this filters replace any gid-lookup by its equivalent cn= based search
 
 use Data::Dumper;
 use lib 'lib/';
