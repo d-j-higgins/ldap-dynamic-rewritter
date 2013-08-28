@@ -2,3 +2,7 @@ this code is licensed under the same license as Perl (Dual license Artistic, GPL
 
 basic ldap-rewrite.pl and associated libraries copyright rot13.org
 bug fixes and dynamic attribute filtering (outfilters) copyright 2012 Hewlett-Packard Development Company, L.P - written by Daniel Higgins (dhiggins@hp.com)
+
+
+The new changes to this code has been release for publication by Hewlett-Packard as long as it remains under the same terms as Perl (dual license). It is tracked under OSRB # 13807
+
