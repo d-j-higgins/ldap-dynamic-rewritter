@@ -36,18 +36,20 @@ use File::Basename;
 
 use lib 'lib';
 require ReqCache;
+require RRObj;
 
 our $VERSION = '0.3';
 our $sel;            # IO::Select;
 our $server_sock;    # list of all sockets
 my %msgidcache;      # store messageids for cache association purpose
-my $cache = new ReqCache;
 my $log_fh;
 
 # load config
 our %debug ;
 our $config ;
 loadconfig();
+
+my $cache = new ReqCache(expire => $config->{cacheexpire});
 
 BEGIN
 {
@@ -149,47 +151,68 @@ sub handleclientreq
     }
     $decodedpdu = log_request($clientsocket,$serversocket,$decodedpdu);
 
+
     # check the cache for this request. forward to server if it's not found, or to client if it is
     my $key;
     my $cdata; 
-    # only check the cache for search requests
-    if ($decodedpdu->{searchRequest})
+    # only search requests are allowed to be cached
+    # to verify: i believe that a bindrequest include a blank searchRequest 
+    if ($decodedpdu->{searchRequest} && ! $decodedpdu->{bindRequest} )
 	{
     	( $key, $cdata ) = $cache->get( $decodedpdu->{searchRequest} );
-	}
 
-    if ( !$cdata )
-    {
-        warn "Request not cached" if $debug{cache};
-
-	# store the messageid so that we can cache the response later
-	# small problem if we store the bindrequests: we will remember the result later no matter the actual password: ignore these
-	if (! $decodedpdu->{bindRequest})
-		{
-        	warn "Caching msgid" if $debug{cache};
-	        $msgidcache{ $clientsocket."-".$decodedpdu->{messageID} } = $key;
-		}
-
-        # send to server
-        warn dump( \%msgidcache, "nocache", $key, $decodedpdu->{messageID} ) if $debug{cache2};
-        my $eres= $LDAPRequest->encode($decodedpdu);
-        return $eres;
-    }
-    else
-    {
-        warn "Request IS cached" if $debug{cache};
-
-        # return the cached response, but replace the messageID since it's obviously outdated now
-        foreach my $response (@$cdata)
+        if ( !$cdata || !$cdata->iscompleted())
         {
-            $response->{messageID} = $decodedpdu->{messageID};
-            warn "MSGID:" . $decodedpdu->{messageID} . " key: $key" if $debug{cache};
-            warn dump( "pkt", $decodedpdu, $response ) if $debug{cache};
-            print $clientsocket $LDAPResponse->encode($response);
+            warn "Request not cached" if $debug{cache};
+    
+            # store the messageid so that we can cache the response later
+            # this is a client request, we always need to store this id
+            warn "Caching msgid" if $debug{cache};
+            $msgidcache{ $clientsocket."-".$decodedpdu->{messageID} } = $key;
+        
+            
+            # do not make a new cached object of the cache simply isnt completed
+            if (!$cdata)
+            {
+            # no cache entry, make a new one and cache it right away                                                                       
+            warn "caching new request" if $debug{cache};                                                                 
+            $cdata = new RRObj();
+            $cdata->source($clientsocket."-".$decodedpdu->{messageID});
+            $cdata->request($decodedpdu->{searchRequest});
+            $cache->set( $decodedpdu->{searchRequest}, $cdata );        
+            }
+        
+        	
+        
+            # send to server
+            warn dump( \%msgidcache, "nocache", $key, $decodedpdu->{messageID} ) if $debug{cache2};
+            my $eres= $LDAPRequest->encode($decodedpdu);
+            return $eres;
+        }
+        else
+        {
+            warn "Request IS cached" if $debug{cache};
+
+            # return the cached response, but replace the messageID since it's obviously outdated now
+            foreach my $response (@{$cdata->response()})
+            {
+                 $response->{messageID} = $decodedpdu->{messageID};
+                 warn "MSGID:" . $decodedpdu->{messageID} . " key: $key" if $debug{cache};
+                 warn dump( "pkt", $decodedpdu, $response ) if $debug{cache};
+                 print $clientsocket $LDAPResponse->encode($response);
+            }
+            return undef;  # return undef to indicate no more work is needed on this job because we could serve everything from cache
         }
     }
+    # always send bind requests to server
+    # and other requests
+#   	if (! $decodedpdu->{bindRequest})
+#    {
+        warn dump( \%msgidcache, "nocache-bind", $key, $decodedpdu->{messageID} ) if $debug{cache2};
+        my $eres= $LDAPRequest->encode($decodedpdu);
+        return $eres;
+#    }
 
-    return undef;
 }
 
 sub log_request
@@ -344,14 +367,18 @@ sub log_response
         warn "CACHE: Previous request: $_" if $debug{cache};
         warn dump($response) if $debug{cache2};
         my $cached = $cache->get($_);
-        if ($cached)
+        # obj not in cache, create a new one and cache that. otherwise append to it:
+        # responses might be more than one element
+        if (! $cached)
         {
-            push @$cached, $response;
+            my $cached= new RRObj();
         }
-        else
+
+        if ( $response->{protocolOp}->{searchResDone})
         {
-            $cached = [$response];
-        }
+                $cached->iscompleted(1);
+        } 
+        $cached->response($response);
         $cache->set( $_, $cached );
     }
     else
@@ -479,6 +506,7 @@ sub endp
     return $fh->peerhost . ":" . $fh->peerport.":".$fh->sockport;
 }
 
+#MAIN
 
 
 if ( !-d $config->{yaml_dir} )
@@ -515,6 +543,9 @@ while ( my @ready = $sel->can_read )
     if ( scalar keys %$server_sock == 0)
 	{
 	%msgidcache=();
+
+    # purge the cache of requestcaches as well
+    $cache->purge();
 	}
 
 
