@@ -37,11 +37,12 @@ use File::Basename;
 use lib 'lib';
 require ReqCache;
 require RRObj;
+require ConnectionPair;
+require ConnectionList;
 
 our $VERSION = '0.3';
 our $sel;            # IO::Select;
-our $server_sock;    # list of all sockets
-my %msgidcache;      # store messageids for cache association purpose
+our $connectlist;
 my $log_fh;
 
 # load config
@@ -58,21 +59,29 @@ BEGIN
     my $SCRIPTDIR = dirname( File::Spec->rel2abs($0) );
     chdir("$SCRIPTDIR/..") || die("cannot chdir: $!");
 
-    $SIG{__DIE__} = sub { Carp::confess @_ };
+#    $SIG{__DIE__} = sub { Carp::confess @_ };
 #    $SIG{__WARN__} = sub { Carp::cluck @_ };
-    $SIG{'__WARN__'} = sub { warn @_; main::log(@_); };
+#    $SIG{'__WARN__'} = sub { warn @_; main::log(@_); };
 }
 
 sub loadconfig
 {
-
-my $y      = LoadFile("./etc/config.yaml");
-%debug  = %{ $y->{debug} };
-$config = $y->{config};
-$config->{last}=time();
-#warn "reloading config\n";
+    my $y      = LoadFile("./etc/config.yaml");
+    %debug  = %{ $y->{debug} };
+    $config = $y->{config};
+    $config->{last}=time();
+    #warn "reloading config\n";
 }
 
+sub debug
+{
+    my ($tag,@str)= @_;
+    return if ! $debug{lc($tag)};
+
+    my ($package, $filename, $line) = caller;
+    print localtime(time)." - $filename:$line - ".uc($tag)." - ".join(" ",@str);
+    print "\n";
+}
 sub log
 {
     return unless $config->{log_file};
@@ -88,8 +97,9 @@ sub log
 
 sub handleserverdata
 {
-    my $clientsocket = shift;
-    my $serversocket = shift;
+    my ($pair) = @_;
+    my $clientsocket = $pair->client;
+    my $serversocket = $pair->server;
 
     # read from server
     asn_read( $serversocket, my $respdu );
@@ -99,7 +109,7 @@ sub handleserverdata
         return 0;
     }
     my $response = $LDAPResponse->decode($respdu);
-    $respdu = log_response($clientsocket,$serversocket,$response);
+    $respdu = log_response($pair,$response);
 
     # and send the result to the client
     print $clientsocket $respdu || return 0;
@@ -109,45 +119,45 @@ sub handleserverdata
 
 sub handleclientreq
 {
-    my $clientsocket = shift;
-    my $serversocket = shift;
+    my $pair= shift;
+    my $clientsocket = $pair->client;
+    my $serversocket = $pair->server;
 
     # read from client
     asn_read( $clientsocket, my $reqpdu );
     if ( !$reqpdu )
     {
         warn "client closed connection\n" if $debug{net};
-        disconnect($clientsocket);
-        disconnect($serversocket);
+        $connectlist->disconnectPair($pair);
         return undef;
     }
     my $decodedpdu = $LDAPRequest->decode($reqpdu);
 
     if ( $debug{pkt} )
     {
+        debug("pkt", "Packet dump from ".$pair->clientid);
         print '-' x 80, "\n";
         print "Request ASN 1:\n";
         Convert::ASN1::asn_hexdump( \*STDOUT, $reqpdu );
         print "Request Perl:\n";
         print dump($decodedpdu);
+        print "\n";
     }
 
     if ( $decodedpdu->{extendedReq} && $decodedpdu->{extendedReq}->{requestName} eq '1.3.6.1.4.1.1466.20037' )
         {
         # this is an SSL request. not implemented yet
         #TODO
-        disconnect($clientsocket);
-        disconnect($serversocket);
+        $connectlist->disconnectPair($pair);
         warn("CRIT: SSL/TLS request but this feature is not implemented");
         return;
         }
 
     if ( $decodedpdu->{unbindRequest} && $decodedpdu->{unbindRequest} == 1)
     {
-    warn "Client requested unbind (disconnect)" if $debug{net};
-    disconnect($clientsocket);
-    disconnect($serversocket);
-    return undef;
+        debug("net","Client requested unbind (disconnect) ".$pair->clientid);
+        $connectlist->disconnectPair($pair);
+        return undef;
     }
     $decodedpdu = log_request($clientsocket,$serversocket,$decodedpdu);
 
@@ -157,48 +167,46 @@ sub handleclientreq
     my $cdata; 
     # only search requests are allowed to be cached
     # to verify: i believe that a bindrequest include a blank searchRequest 
-    if ($decodedpdu->{searchRequest} && ! $decodedpdu->{bindRequest} )
+    my $decodedrequest= $decodedpdu->{searchRequest};
+    if ($decodedrequest && ! $decodedpdu->{bindRequest} )
 	{
-    	( $key, $cdata ) = $cache->get( $decodedpdu->{searchRequest} );
+    	( $key, $cdata ) = $cache->get( $decodedrequest );
 
         if ( !$cdata || !$cdata->iscompleted())
         {
-            warn "Request not cached" if $debug{cache};
+            debug("cache","Request $key not cached");
     
             # store the messageid so that we can cache the response later
             # this is a client request, we always need to store this id
-            warn "Caching msgid" if $debug{cache};
-            $msgidcache{ $clientsocket."-".$decodedpdu->{messageID} } = $key;
-        
+            $pair->{clientmsgid} = $key;
+            $pair->{request} = $decodedrequest;
             
             # do not make a new cached object of the cache simply isnt completed
             if (!$cdata)
             {
             # no cache entry, make a new one and cache it right away                                                                       
-            warn "caching new request" if $debug{cache};                                                                 
+            debug("cache","New cache object created");
             $cdata = new RRObj();
             $cdata->source($clientsocket."-".$decodedpdu->{messageID});
-            $cdata->request($decodedpdu->{searchRequest});
-            $cache->set( $decodedpdu->{searchRequest}, $cdata );        
+            $cdata->request($decodedrequest);
+            $cache->set( $decodedrequest, $cdata );        
             }
         
-        	
-        
             # send to server
-            warn dump( \%msgidcache, "nocache", $key, $decodedpdu->{messageID} ) if $debug{cache2};
+            debug("cache2","Request not cached",dump(  $key, $decodedpdu->{messageID} )) ;
             my $eres= $LDAPRequest->encode($decodedpdu);
             return $eres;
         }
         else
         {
-            warn "Request IS cached" if $debug{cache};
+            debug("cache","Request IS cached");
 
             # return the cached response, but replace the messageID since it's obviously outdated now
             foreach my $response (@{$cdata->response()})
             {
                  $response->{messageID} = $decodedpdu->{messageID};
-                 warn "MSGID:" . $decodedpdu->{messageID} . " key: $key" if $debug{cache};
-                 warn dump( "pkt", $decodedpdu, $response ) if $debug{cache};
+                 debug("cache","MSGID:" . $decodedpdu->{messageID} . " key: $key");
+                 debug("cache",dump( "pkt", $decodedpdu, $response ));
                  print $clientsocket $LDAPResponse->encode($response);
             }
             return undef;  # return undef to indicate no more work is needed on this job because we could serve everything from cache
@@ -208,7 +216,8 @@ sub handleclientreq
     # and other requests
 #   	if (! $decodedpdu->{bindRequest})
 #    {
-        warn dump( \%msgidcache, "nocache-bind", $key, $decodedpdu->{messageID} ) if $debug{cache2};
+        debug("cache","Received uncachable bind request from ".$pair->clientid);
+        debug("cache2", dump($key, $decodedpdu->{messageID} )) ;
         my $eres= $LDAPRequest->encode($decodedpdu);
         return $eres;
 #    }
@@ -286,8 +295,9 @@ sub load_filters
 
 sub log_response
 {
-    my $clientsocket = shift;
-    my $serversocket = shift;
+    my $pair = shift;
+    my $clientsocket = $pair->client;
+    my $serversocket = $pair->server;
     my $response = shift;
     die "empty pdu" unless $response;
 
@@ -295,19 +305,19 @@ sub log_response
     #	print "Response ASN 1:\n";
     #	Convert::ASN1::asn_hexdump(\*STDOUT,$pdu);
     #	print "Response Perl:\n";
-    warn "Response: " . dump($response) if $debug{pkt};
+    debug("pkt","Response: " . dump($response)); 
 
     if ( defined $response->{protocolOp}->{searchResEntry} )
     {
         my $uid = $response->{protocolOp}->{searchResEntry}->{objectName};
-        warn "## objectName $uid" if $debug{filter};
+        debug("filter","Filter on objectName $uid");
 
         # searchResEntry has format { attributes => [ { type => ATTRNAME, vals => [actual values] } , ... ], objectName => 'DN' }
 
         # do dynamic filters
         foreach my $filter ( @{ $config->{outfilters} } )
         {
-            warn( "running filter: " . $filter ) if $debug{filter};
+            debug("filter","Running filter: " . $filter ); 
 
             eval {
                 my $filterobj = new $filter;
@@ -315,7 +325,7 @@ sub log_response
             };
             if ($@)
             {
-                warn "Unable to run filter $filter: $@" if $debug{filter};
+                debug("filter","Unable to run filter $filter: $@");
             }
 	if ( $config->{filtervalidate} == 1 )
 		{
@@ -346,7 +356,7 @@ sub log_response
             next unless -e $full_path;
 
             my $data = LoadFile($full_path);
-            warn "# $full_path yaml = ", dump($data) if $debug{filter};
+            debug("filter","YAML: $full_path yaml = ", dump($data)); 
 
             foreach my $type ( keys %$data )
             {
@@ -362,7 +372,7 @@ sub log_response
 
     }
     ##cache storage
-    if ( $_ = $msgidcache{$clientsocket."-".$response->{messageID} } )
+    if ( $_ = $pair->{clientmsgid} )
     {
         warn "CACHE: Previous request: $_" if $debug{cache};
         warn dump($response) if $debug{cache2};
@@ -420,50 +430,12 @@ sub connect_to_server
     return $sock;
 }
 
-sub disconnect
-{
-    my $fh = shift;
-
-    # one of two connection has closed. terminate
-    no warnings;
-    warn "## remove $fh " . time if $debug{net};
-
-    my $srv;
-    my $client; 
-
-    my $item= $server_sock->{endp($fh)};
-    $srv    = $item->{server};
-    $client = $item->{client};
-    my $tmpendp;
-
-    if ($srv)
-    {
-    $tmpendp=endp($srv);
-    warn "removed srv ".$tmpendp if $debug{net};
-        $sel->remove($srv);
-        $srv->close;
-        delete $server_sock->{ $tmpendp };
-    }
-
-    if ($client)
-    {
-    $tmpendp=endp($client);
-    warn "removed client ".$tmpendp if $debug{net};
-        $sel->remove($client);
-        $client->close;
-        delete $server_sock->{ $tmpendp };
-    }
-    use warnings;
-
-    # we have finished with the socket
-}
-
 sub handleClientConnection
 {
     my $sel = shift;    # IO::Selector
-    my $fh  = shift;    # socket to handle
+    my $pair= shift;    # pair
 
-    my $clientreq = handleclientreq( $server_sock->{endp($fh)}->{client}, undef );
+    my $clientreq = handleclientreq( $pair );
     if ( !defined($clientreq) )
     {
         # handleclientreq returned undef, meaning it handled all the work itself
@@ -472,39 +444,37 @@ sub handleClientConnection
 
     # we have data to proxy, connect to the server now. 
     # if we don't already have a socket connection
-    my $srv = $server_sock->{endp($fh)}->{server} ;
+    my $srv = $pair->server;
     if ( !$srv )
      {
      $srv= connect_to_server;
-     my $t = { server => $srv, client => $fh };
-     if ( !$t->{server} )
+     $connectlist->newServer($pair,$srv);
+     # server failed to connect. disconnect all
+     if ( !$pair->server )
          {
-             disconnect( $t->{client} );
+             $connectlist->disconnectPair($pair);
              return 0;
          }
     
-    $server_sock->{ endp($t->{client}) } = $t;
-    $server_sock->{ endp($t->{server}) } = $t;
      }
     # and send the data
     print $srv $clientreq;
-
-    warn "## handled ".endp($fh)." " . time if $debug{net};
-
-    # we should also listen for the server's reply
-    $sel->add( $srv );
+    debug("net","Sent client request to server: ".$pair->clientid);
 
     return 1;
 }
 
-sub endp
-{
-    my $fh = shift;
 
-    no warnings;
-    return undef if ! $fh;
-    return $fh->peerhost . ":" . $fh->peerport.":".$fh->sockport;
+sub clientState()
+{
+        my ($pair) =@_;
+
+
+        # waiting for request
+        # parsing request
+        #
 }
+
 
 #MAIN
 
@@ -528,56 +498,64 @@ load_filters( $config->{outfilter_dir}, $config->{outfilters} );
 load_filters( $config->{infilter_dir},  $config->{infilters} );
 warn "# config = ", dump($config);
 
-
+$connectlist= new ConnectionList("sel" => $sel);
 
 while ( my @ready = $sel->can_read )
 { 
     if ($config->{last}+15<= time())
 	{
-	# reload config every 15 seconds, subject to connections being made
-	# this allows changing log levels on the fly
-	loadconfig();
+    	# reload config every 15 seconds, subject to connections being made
+    	# this allows changing log levels on the fly
+    	loadconfig();
 	}
-    # on long running server, msgidcache will fill up the memory
-    # this is a crude hack to get it back under control: when the server is idle, flush the cache
-    if ( scalar keys %$server_sock == 0)
+    if ( ! $connectlist->serverBusy() )
 	{
-	%msgidcache=();
-
-    # purge the cache of requestcaches as well
-    $cache->purge();
+        # purge the cache (garbage collect) when the server is idle
+        $cache->purge();
 	}
 
 
-    warn "## fh poll " . time if $debug{net};
+    debug("net","Select() polling");# if $debug{net};
     foreach my $fh (@ready)
     {
-        warn "## fh ready ". endp($fh)." " . time if $debug{net};
+        debug("net","Connection ready ". ConnectionList::_endp($fh));# if $debug{net};
         if ( $fh == $listenersock )
         {
 
             # listener is ready, meaning we have a new connection req waiting
+
+            # accept
             my $psock = $listenersock->accept;
-            $server_sock->{endp($psock)} = { client => $psock };
-            $sel->add($psock);
-            warn "## add ".endp($psock)." " . time if $debug{net};
+            # and store
+            my $endp= $connectlist->newClient($psock);
+            debug("net","Accepted new client: $endp");
         }
-        elsif ( endp($fh) eq endp($server_sock->{endp($fh)}->{client}) )
+        elsif ( $connectlist->isClient($fh) )
         {
+            my $pair= $connectlist->findPair($fh);
 
             # a client socket is ready, a request has come in on it
-            warn "## fh new client ".endp($fh)." " . time if $debug{net};
-            handleClientConnection($sel,$fh);
-
+            handleClientConnection($sel,$pair);
+            debug("net","Received client request (data) ".$pair->clientid);
+        }
+        elsif ( $connectlist->isServer($fh))
+        {
+            my $pair= $connectlist->findPair($fh);
+            debug("net","Server replied with data ".$pair->serverid()." -> ".$pair->clientid());
+            if ( !handleserverdata($pair))
+            {
+                $connectlist->disconnectPair($pair);
+            }
         }
         else
         {
-            warn "unrequested server data ".endp($fh)." " . time if $debug{net};
-            if ( !handleserverdata( $server_sock->{endp($fh)}->{client}, $server_sock->{endp($fh)}->{server} ) )
-            {
-                disconnect($fh);
-            }
+            warn "BUG: Packet is from Neither client nor associated server. who are you? ".ConnectionList::_endp($fh)." \n";
+            print "->".$connectlist->isClient($fh)." ".$connectlist->isServer($fh);
+            print "\n";
+            print "->".dump($connectlist->findPair($fh));
+            print "\n";
         }
+
     }
 }
 
