@@ -22,6 +22,7 @@ debug:
     err    : 1     
     pkt    : 0     
     pktsecure    : 0     
+    pktasn : 0     
     net    : 0     
     cache  : 0     
     cache2 : 0     

@@ -73,26 +73,28 @@ sub loadconfig
     #warn "reloading config\n";
 }
 
+sub log
+{
+    print join("\n",@_);
+    return unless $config->{log_file};
+
+    if ( !$log_fh )
+    {
+        open( $log_fh, '>>', $config->{log_file} ) || die "can't open ", $config->{log_file}, ": $!";
+        print $log_fh localtime(time) . " Opened log file";
+    }
+    $log_fh->autoflush(1);
+    # print $log_fh localtime()." - ".join( "\n".localtime()." - ", @_ ), "\n";
+    print $log_fh join("\n",@_);
+}
 sub debug
 {
     my ($tag,@str)= @_;
     return if ! $debug{lc($tag)};
 
     my ($package, $filename, $line) = caller;
-    print localtime(time)." - $filename:$line - ".uc($tag)." - ".join(" ",@str);
-    print "\n";
-}
-sub log
-{
-    return unless $config->{log_file};
-
-    if ( !$log_fh )
-    {
-        open( $log_fh, '>>', $config->{log_file} ) || die "can't open ", $config->{log_file}, ": $!";
-        print $log_fh "# " . time;
-    }
-    $log_fh->autoflush(1);
-    print $log_fh localtime()." - ".join( "\n".localtime()." - ", @_ ), "\n";
+    my $str= localtime(time)." - $filename:$line - ".uc($tag)." - ".join(" ",@str)."\n";
+    main::log($str);
 }
 
 sub handleserverdata
@@ -105,16 +107,38 @@ sub handleserverdata
     asn_read( $serversocket, my $respdu );
     if ( !$respdu )
     {
-        warn "server closed connection\n" if $debug{net};
+        debug("net","Server ",$pair->serverid," closed connection without a valid packet");
         return 0;
     }
     my $response = $LDAPResponse->decode($respdu);
-    $respdu = log_response($pair,$response);
+
+    debug("net","Received response from",$pair->serverid);
+    debug("packetsecure","Request: \n" , dump($response));
+    logASNHexdump($respdu);
+
+    runResponseFilters($pair,$response);
+    setcache($pair,$response);
+    $respdu = $LDAPResponse->encode($response);
 
     # and send the result to the client
     print $clientsocket $respdu || return 0;
 
     return 1;    # more expected
+}
+sub logASNHexdump
+{
+    my ($pdu) = @_;
+
+    return if ($debug{pktasn} != 1);
+    debug("pktasn", "ASN 1 packet:");
+    my $hex;
+    open(F,">",\$hex);
+    Convert::ASN1::asn_hexdump(\*F, $pdu);
+    close F;
+    $hex =~ s/^\s+//;
+
+    main::log($hex);
+
 }
 
 sub handleclientreq
@@ -133,17 +157,6 @@ sub handleclientreq
     }
     my $decodedpdu = $LDAPRequest->decode($reqpdu);
 
-    if ( $debug{pkt} )
-    {
-        debug("pkt", "Packet dump from ".$pair->clientid);
-        print '-' x 80, "\n";
-        print "Request ASN 1:\n";
-        Convert::ASN1::asn_hexdump( \*STDOUT, $reqpdu );
-        print "Request Perl:\n";
-        print dump($decodedpdu);
-        print "\n";
-    }
-
     if ( $decodedpdu->{extendedReq} && $decodedpdu->{extendedReq}->{requestName} eq '1.3.6.1.4.1.1466.20037' )
         {
         # this is an SSL request. not implemented yet
@@ -159,57 +172,34 @@ sub handleclientreq
         $connectlist->disconnectPair($pair);
         return undef;
     }
-    $decodedpdu = log_request($clientsocket,$serversocket,$decodedpdu);
+    debug("net","Received request from",$pair->clientid);
+    debug("packetsecure","Request: \n" , dump($decodedpdu));
+    logASNHexdump($reqpdu);
+    runDynamicRequestFilter($decodedpdu);
 
 
-    # check the cache for this request. forward to server if it's not found, or to client if it is
-    my $key;
-    my $cdata; 
     # only search requests are allowed to be cached
-    # to verify: i believe that a bindrequest include a blank searchRequest 
-    my $decodedrequest= $decodedpdu->{searchRequest};
-    if ($decodedrequest && ! $decodedpdu->{bindRequest} )
-	{
-    	( $key, $cdata ) = $cache->get( $decodedrequest );
-
-        if ( !$cdata || !$cdata->iscompleted())
+    # to verify: i believe that a bindrequest include a blank searchRequest
+    if ( $decodedpdu->{searchRequest} && !$decodedpdu->{bindRequest})
+    {
+        my ($dpdus) = getcache($pair,$decodedpdu);
+        if (! $dpdus) 
         {
-            debug("cache","Request $key not cached");
-    
-            # store the messageid so that we can cache the response later
-            # this is a client request, we always need to store this id
-            $pair->{clientmsgid} = $key;
-            $pair->{request} = $decodedrequest;
-            
-            # do not make a new cached object of the cache simply isnt completed
-            if (!$cdata)
-            {
-            # no cache entry, make a new one and cache it right away                                                                       
-            debug("cache","New cache object created");
-            $cdata = new RRObj();
-            $cdata->source($clientsocket."-".$decodedpdu->{messageID});
-            $cdata->request($decodedrequest);
-            $cache->set( $decodedrequest, $cdata );        
-            }
-        
-            # send to server
-            debug("cache2","Request not cached",dump(  $key, $decodedpdu->{messageID} )) ;
-            my $eres= $LDAPRequest->encode($decodedpdu);
-            return $eres;
+            # not cached, we need to ask the server for data
+            # but the server socket might not be connected. return it for later processing
+            debug("pkt","Forwarding request to server");
+            return $LDAPRequest->encode($decodedpdu);
         }
         else
         {
-            debug("cache","Request IS cached");
-
-            # return the cached response, but replace the messageID since it's obviously outdated now
-            foreach my $response (@{$cdata->response()})
+            foreach my $res (@$dpdus)
             {
-                 $response->{messageID} = $decodedpdu->{messageID};
-                 debug("cache","MSGID:" . $decodedpdu->{messageID} . " key: $key");
-                 debug("cache",dump( "pkt", $decodedpdu, $response ));
-                 print $clientsocket $LDAPResponse->encode($response);
+                debug("pkt","Sent one cached packet to client");
+                #cached data. send it directly to the client
+                print $clientsocket $LDAPResponse->encode($res);
             }
-            return undef;  # return undef to indicate no more work is needed on this job because we could serve everything from cache
+            # and dont send anything to the server
+            return undef;
         }
     }
     # always send bind requests to server
@@ -217,33 +207,69 @@ sub handleclientreq
 #   	if (! $decodedpdu->{bindRequest})
 #    {
         debug("cache","Received uncachable bind request from ".$pair->clientid);
-        debug("cache2", dump($key, $decodedpdu->{messageID} )) ;
+        debug("cache2", dump($decodedpdu->{messageID} )) ;
         my $eres= $LDAPRequest->encode($decodedpdu);
         return $eres;
 #    }
 
 }
-
-sub log_request
+# get from the cache
+#
+sub getcache
 {
-    my $clientsocket = shift;
-    my $serversocket = shift;
-    my $request = shift;
+    my ($pair,$decodedpdu) = @_;
+    my $decodedrequest= $decodedpdu->{searchRequest};
+    my ($key, $cdata) = $cache->get($decodedrequest);
 
-    die "empty pdu" unless $request;
+    if (!$cdata || !$cdata->iscompleted())
+    {
+        debug("cache", "Request $key not cached");
 
-    #	print '-' x 80,"\n";
-    #	print "Request ASN 1:\n";
-    #	Convert::ASN1::asn_hexdump(\*STDOUT,$pdu);
-    #	print "Request Perl:\n";
+        # store the messageid so that we can cache the response later
+        # this is a client request, we always need to store this id
+        $pair->{clientmsgid} = $key;
+        $pair->{request}     = $decodedrequest;
 
-    warn "## Received request" if $debug{net};
-    warn "Request: " . dump($request) if $debug{pktsecure};
+        # do not make a new cached object of the cache simply isnt completed
+        if (!$cdata)
+        {
 
+            # no cache entry, make a new one and cache it right away
+            debug("cache", "New cache object created");
+            $cdata = new RRObj();
+            $cdata->source($pair->clientid. "-" . $decodedpdu->{messageID});
+            $cdata->request($decodedrequest);
+            $cache->set($decodedrequest, $cdata);
+        }
+
+        # send to server
+        debug("cache2", "Request not cached: $key", dump($decodedpdu->{messageID}));
+        return undef; # not cached. return no data
+    }
+    else
+    {
+        debug("cache", "Request is cached");
+
+        my $resparr = [];
+        # return the cached response, but replace the messageID since it's obviously outdated now
+        foreach my $response (@{ $cdata->response() })
+        {
+            $response->{messageID} = $decodedpdu->{messageID};
+            debug("cache", "Found cached item for MSGID:" . $decodedpdu->{messageID} . " key: $key");
+            debug("cache", dump($decodedpdu, $response));
+            push @$resparr, $response;
+        }
+        return $resparr;
+    }
+}
+
+sub runDynamicRequestFilter
+{
+    my ($request) = @_;
     # do dynamic filters
     foreach my $filter ( @{ $config->{infilters} } )
     {
-        warn( "running filter: " . $filter ) if $debug{filter};
+        debug("filters","Running request filter: " , $filter );
 
         eval {
             my $filterobj = new $filter;
@@ -251,7 +277,7 @@ sub log_request
         };
         if ($@)
         {
-            warn "Unable to run filter $filter: $@" if $debug{filter};
+            warn "Failure while running filter $filter: $@" if $debug{filter};
         }
 
 	if ( $config->{filtervalidate} == 1 )
@@ -260,12 +286,9 @@ sub log_request
 			if (! defined($req))
 				{
 				die("ERROR: after running filter $filter, the request does not compile anymore! this probably means the filter corrupted the data structure!");
-			
 				}
 		}
     }
-
-    return $request;
 }
 
 sub load_filters
@@ -293,115 +316,125 @@ sub load_filters
     closedir($dh);
 }
 
-sub log_response
+sub runResponseFilters
 {
     my $pair = shift;
-    my $clientsocket = $pair->client;
-    my $serversocket = $pair->server;
     my $response = shift;
-    die "empty pdu" unless $response;
 
-    #	print '-' x 80,"\n";
-    #	print "Response ASN 1:\n";
-    #	Convert::ASN1::asn_hexdump(\*STDOUT,$pdu);
-    #	print "Response Perl:\n";
-    debug("pkt","Response: " . dump($response)); 
-
-    if ( defined $response->{protocolOp}->{searchResEntry} )
+    if (defined $response->{protocolOp}->{searchResEntry})
     {
         my $uid = $response->{protocolOp}->{searchResEntry}->{objectName};
-        debug("filter","Filter on objectName $uid");
-
+        debug("filter", "Running response filters on objectName $uid");
         # searchResEntry has format { attributes => [ { type => ATTRNAME, vals => [actual values] } , ... ], objectName => 'DN' }
-
-        # do dynamic filters
-        foreach my $filter ( @{ $config->{outfilters} } )
-        {
-            debug("filter","Running filter: " . $filter ); 
-
-            eval {
-                my $filterobj = new $filter;
-                my $res       = $filterobj->filter( $response->{protocolOp}->{searchResEntry} );
-            };
-            if ($@)
-            {
-                debug("filter","Unable to run filter $filter: $@");
-            }
-	if ( $config->{filtervalidate} == 1 )
-		{
-		my $eres= $LDAPResponse->encode($response);
-			if (! defined($eres))
-				{
-				die("WARNING: after running filter $filter, the response does not compile anymore!");
-				}
-		}
-        }
-
-        # do YAML attributes
-        # YAML file may be a DN-named file or attributename/value ending in .yaml
-        # ie gidNumber/3213.yaml
-        my @additional_yamls = ($uid);
-        foreach my $attr ( @{ $response->{protocolOp}->{searchResEntry}->{attributes} } )
-        {
-            foreach my $v ( @{ $attr->{vals} } )
-            {
-                push @additional_yamls, $attr->{type} . '/' . $v;
-            }
-        }
-
-        #warn "# additional_yamls ",dump( @additional_yamls );
-        foreach my $path (@additional_yamls)
-        {
-            my $full_path = $config->{yaml_dir} . '/' . $path . '.yaml';
-            next unless -e $full_path;
-
-            my $data = LoadFile($full_path);
-            debug("filter","YAML: $full_path yaml = ", dump($data)); 
-
-            foreach my $type ( keys %$data )
-            {
-                my $vals = $data->{$type};
-
-                push @{ $response->{protocolOp}->{searchResEntry}->{attributes} },
-                  {
-                    type => $config->{overlay_prefix} . $type,
-                    vals => ref($vals) eq 'ARRAY' ? $vals : [$vals],
-                  };
-            }
-        }
-
+        runDynamicResponseFilter($response);
+        runYAMLResponseFilters($response);
     }
-    ##cache storage
-    if ( $_ = $pair->{clientmsgid} )
+
+    return $response;
+
+}
+
+sub runYAMLResponseFilters
+{
+    my ($response) = @_;
+
+    # do YAML attributes
+    # YAML file may be a DN-named file or attributename/value ending in .yaml
+    # ie gidNumber/3213.yaml
+    my $uid = $response->{protocolOp}->{searchResEntry}->{objectName};
+    my @additional_yamls = ($uid);
+    foreach my $attr (@{ $response->{protocolOp}->{searchResEntry}->{attributes} })
     {
-        warn "CACHE: Previous request: $_" if $debug{cache};
+        foreach my $v (@{ $attr->{vals} })
+        {
+            push @additional_yamls, $attr->{type} . '/' . $v;
+        }
+    }
+
+    #warn "# additional_yamls ",dump( @additional_yamls );
+    foreach my $path (@additional_yamls)
+    {
+        my $full_path = $config->{yaml_dir} . '/' . $path . '.yaml';
+        next unless -e $full_path;
+
+        my $data = LoadFile($full_path);
+        debug("filter", "YAML: $full_path yaml = ", dump($data));
+
+        foreach my $type (keys %$data)
+        {
+            my $vals = $data->{$type};
+
+            push @{ $response->{protocolOp}->{searchResEntry}->{attributes} },
+              {
+                type => $config->{overlay_prefix} . $type,
+                vals => ref($vals) eq 'ARRAY' ? $vals : [$vals],
+              };
+        }
+    }
+    return $response;
+}
+sub runDynamicResponseFilter
+{
+    my ($response) = @_;
+
+    # do dynamic filters
+    foreach my $filter (@{ $config->{outfilters} })
+    {
+        debug("filter", "Running filter: " . $filter);
+
+        eval {
+            my $filterobj = new $filter;
+            my $res       = $filterobj->filter($response->{protocolOp}->{searchResEntry});
+        };
+        if ($@)
+        {
+            debug("filter", "Unable to run filter $filter: $@");
+        }
+        if ($config->{filtervalidate} == 1)
+        {
+            my $eres = $LDAPResponse->encode($response);
+            if (!defined($eres))
+            {
+                die("WARNING: after running filter $filter, the response does not compile anymore!");
+            }
+        }
+    }
+
+    return $response;
+}
+
+sub setcache
+{
+    my ($pair, $response) = @_;
+
+    ##cache storage
+    my $prevReqKey = $pair->{clientmsgid};
+    if ($prevReqKey)
+    {
+        debug("cache", "Previous request key: $prevReqKey");
         warn dump($response) if $debug{cache2};
-        my $cached = $cache->get($_);
+        my $cached = $cache->get($prevReqKey);
+
         # obj not in cache, create a new one and cache that. otherwise append to it:
         # responses might be more than one element
-        if (! $cached)
+        if (!$cached)
         {
-            my $cached= new RRObj();
+            my $cached = new RRObj();
         }
 
-        if ( $response->{protocolOp}->{searchResDone})
+        if ($response->{protocolOp}->{searchResDone})
         {
-                $cached->iscompleted(1);
-        } 
+            $cached->iscompleted(1);
+        }
         $cached->response($response);
-        $cache->set( $_, $cached );
+        $cache->set($prevReqKey, $cached);
     }
     else
     {
+        debug("fatal", "Received a response without first asking a question");
 
         #            warn "CACHE: no previous request for $response->{messageID}";
     }
-    ##
-    my $pdu = $LDAPResponse->encode($response);
-
-    #    warn "## response = ", dump($response);
-
-    return $pdu;
 }
 
 sub connect_to_server
@@ -422,11 +455,11 @@ sub connect_to_server
 
     if ( !$sock )
     {
-        warn "can't open ", $config->{upstream_ldap}, " $!\n" if $debug{net};
+        debug("net","Could not connect to server ", $config->{upstream_ldap}, " $!");
         return undef;
     }
 
-    warn "## connected to ", $sock->peerhost, ":", $sock->peerport, "\n" if $debug{net};
+    debug("net","Connected to server ($sock) ", $sock->peerhost. ":". $sock->peerport);
     return $sock;
 }
 
@@ -535,8 +568,8 @@ while ( my @ready = $sel->can_read )
             my $pair= $connectlist->findPair($fh);
 
             # a client socket is ready, a request has come in on it
+            debug("net","Received client request ".$pair->clientid);
             handleClientConnection($sel,$pair);
-            debug("net","Received client request (data) ".$pair->clientid);
         }
         elsif ( $connectlist->isServer($fh))
         {
